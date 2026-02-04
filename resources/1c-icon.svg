@@ -1,0 +1,9 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Фон прозрачный -->
+  
+  <!-- Цифра 1 в сером цвете (вместо оранжевого #FF6B00) -->
+  <text x="26" y="92" font-family="Arial, sans-serif" font-size="82" font-weight="900" fill="#808080" letter-spacing="-3">1</text>
+  
+  <!-- Буква С в сером цвете (вместо синего #0066CC) -->
+  <text x="68" y="92" font-family="Arial, sans-serif" font-size="82" font-weight="900" fill="#808080" letter-spacing="-3">С</text>
+</svg>
