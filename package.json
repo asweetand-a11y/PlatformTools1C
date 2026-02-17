@@ -1,12 +1,12 @@
 {
-  "name": "1c-platform-tools",
-  "displayName": "1C Platform Tools",
+  "name": "1c-dev-tools",
+  "displayName": "1C Dev Tools",
   "description": "Расширение для Cursor с инструментами разработки для экосистемы 1С. Предоставляет удобный интерфейс для работы с проектами 1С, включая разбор обработок, отчетов и конфигураций.",
-  "version": "2.7.8",
+  "version": "2.9.4",
   "publisher": "whiterabbit",
   "repository": {
-    "type": "",
-    "url": ""
+    "type": "git",
+    "url": "https://github.com/asweetand-a11y/PlatformTools1C"
   },
   "license": "MIT",
   "author": {
@@ -33,262 +33,349 @@
     "Testing"
   ],
   "activationEvents": [
-    "workspaceContains:packagedef"
+    "workspaceContains:packagedef",
+    "onDebug",
+    "onDebugResolve:onec"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "breakpoints": [
+      {
+        "language": "bsl"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "onec",
+        "label": "1C:Enterprise",
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "request": { "type": "string", "enum": ["launch", "attach"], "description": "Request type" },
+              "name": { "type": "string", "description": "Configuration name" },
+              "debugServerHost": { "type": "string", "description": "Debug server host (env.json --debug-server)" },
+              "debugServerPort": { "type": "number", "description": "Debug server port (env.json --debug-port-range)", "default": 1560 },
+              "infoBaseAlias": { "type": "string", "description": "RDBG info base alias (DefAlias for file-based)" },
+              "ibconnection": { "type": "string", "description": "IB connection (env.json --ibconnection)" },
+              "infoBase": { "type": "string", "description": "Info base name (env.json --infoBase)" },
+              "rootProject": { "type": "string", "description": "Root project path (workspace folder)" },
+              "platformPath": { "type": "string", "description": "1C platform path (env.json --v8-platform-root)" },
+              "platformVersion": { "type": "string", "description": "Platform version (env.json --v8version)" },
+              "extensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths" },
+              "autoAttachTypes": { "type": "array", "items": { "type": "string", "enum": ["Client", "Server"] }, "description": "Auto-attach target types" }
+            }
+          },
+          "attach": {
+            "required": [],
+            "properties": {
+              "request": { "type": "string", "enum": ["attach"] },
+              "name": { "type": "string" },
+              "debugServerHost": { "type": "string", "description": "env.json --debug-server" },
+              "debugServerPort": { "type": "number", "default": 1560, "description": "env.json --debug-port-range" },
+              "infoBaseAlias": { "type": "string", "description": "RDBG alias (DefAlias for file-based)" },
+              "ibconnection": { "type": "string", "description": "env.json --ibconnection" },
+              "rootProject": { "type": "string" },
+              "autoAttachTypes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "onec",
+            "request": "attach",
+            "name": "1C: Присоединиться",
+            "debugServerHost": "localhost",
+            "debugServerPort": 1560,
+            "infoBaseAlias": "DefAlias",
+            "rootProject": "${workspaceFolder}",
+            "autoAttachTypes": ["Client", "Server"]
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "1C: Присоединиться",
+            "description": "Подключиться к серверу отладки 1С (параметры из env.json)",
+            "body": {
+              "type": "onec",
+              "request": "attach",
+              "name": "1C: Присоединиться",
+              "debugServerHost": "localhost",
+              "debugServerPort": 1560,
+              "infoBaseAlias": "DefAlias",
+              "rootProject": "${workspaceFolder}",
+              "autoAttachTypes": ["Client", "Server"]
+            }
+          },
+          {
+            "label": "1C: Запуск",
+            "description": "Запуск с отладкой 1С (параметры из env.json)",
+            "body": {
+              "type": "onec",
+              "request": "launch",
+              "name": "1C: Запуск",
+              "debugServerHost": "localhost",
+              "debugServerPort": 1560,
+              "infoBaseAlias": "DefAlias",
+              "rootProject": "${workspaceFolder}",
+              "autoAttachTypes": ["Client", "Server"]
+            }
+          }
+        ]
+      }
+    ],
     "views": {
       "explorer": [
         {
-          "id": "1c-platform-tools-panel-view",
+          "id": "1c-dev-tools-panel-view",
           "name": "1C Tools"
         }
       ]
     },
     "commands": [
       {
-        "command": "1c-platform-tools.refresh",
+        "command": "1c-dev-tools.refresh",
         "title": "Обновить",
         "icon": "$(refresh)"
       },
       {
-        "command": "1c-platform-tools.settings",
+        "command": "1c-dev-tools.settings",
         "title": "Настройки",
         "icon": "$(gear)"
       },
       {
-        "command": "1c-platform-tools.infobase.createEmpty",
+        "command": "1c-dev-tools.infobase.createEmpty",
         "title": "Создать пустую ИБ",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.infobase.updateDatabase",
+        "command": "1c-dev-tools.infobase.updateDatabase",
         "title": "Постобработка обновления",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.infobase.blockExternalResources",
+        "command": "1c-dev-tools.infobase.blockExternalResources",
         "title": "Запретить работу с внешними ресурсами",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.infobase.dumpToDt",
+        "command": "1c-dev-tools.infobase.dumpToDt",
         "title": "Выгрузить в dt",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.infobase.loadFromDt",
+        "command": "1c-dev-tools.infobase.loadFromDt",
         "title": "Загрузить из dt",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.loadFromSrc",
+        "command": "1c-dev-tools.configuration.loadFromSrc",
         "title": "Загрузить конфигурацию из src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.loadFromSrc.init",
+        "command": "1c-dev-tools.configuration.loadFromSrc.init",
         "title": "Инициализировать конфигурацию из src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.updateFromSrcWithCommit",
+        "command": "1c-dev-tools.configuration.updateFromSrcWithCommit",
         "title": "Обновить конфигурацию из src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.loadFromCf",
+        "command": "1c-dev-tools.configuration.loadFromCf",
         "title": "Загрузить конфигурацию из 1Cv8.cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.dumpToSrc",
+        "command": "1c-dev-tools.configuration.dumpToSrc",
         "title": "Выгрузить конфигурацию в src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.dumpUpdateToSrc",
+        "command": "1c-dev-tools.configuration.dumpUpdateToSrc",
         "title": "Выгрузить обновление в src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.dumpToCf",
+        "command": "1c-dev-tools.configuration.dumpToCf",
         "title": "Выгрузить конфигурацию в 1Cv8.cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.dumpToDist",
+        "command": "1c-dev-tools.configuration.dumpToDist",
         "title": "Выгрузить файл поставки в 1Cv8dist.cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.build",
+        "command": "1c-dev-tools.configuration.build",
         "title": "Собрать 1Cv8.cf из src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.configuration.decompile",
+        "command": "1c-dev-tools.configuration.decompile",
         "title": "Разобрать 1Cv8.cf в src/cf",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.loadFromSrc",
+        "command": "1c-dev-tools.extensions.loadFromSrc",
         "title": "Загрузить расширения из src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.loadFromCfe",
+        "command": "1c-dev-tools.extensions.loadFromCfe",
         "title": "Загрузить расширение из *.cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.dumpToSrc",
+        "command": "1c-dev-tools.extensions.dumpToSrc",
         "title": "Выгрузить расширения в src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.dumpUpdateToSrc",
+        "command": "1c-dev-tools.extensions.dumpUpdateToSrc",
         "title": "Выгрузить обновление расширений в src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.updateFromSrcWithCommit",
+        "command": "1c-dev-tools.extensions.updateFromSrcWithCommit",
         "title": "Обновить расширения из src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.dumpToCfe",
+        "command": "1c-dev-tools.extensions.dumpToCfe",
         "title": "Выгрузить расширение в *.cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.build",
+        "command": "1c-dev-tools.extensions.build",
         "title": "Собрать *.cfe из src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.extensions.decompile",
+        "command": "1c-dev-tools.extensions.decompile",
         "title": "Разобрать *.cfe в src/cfe",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.externalProcessors.build",
+        "command": "1c-dev-tools.externalProcessors.build",
         "title": "Собрать внешнюю обработку",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.externalProcessors.decompile",
+        "command": "1c-dev-tools.externalProcessors.decompile",
         "title": "Разобрать внешнюю обработку",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.externalReports.build",
+        "command": "1c-dev-tools.externalReports.build",
         "title": "Собрать внешний отчет",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.externalReports.decompile",
+        "command": "1c-dev-tools.externalReports.decompile",
         "title": "Разобрать внешний отчет",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.externalFiles.clearCache",
+        "command": "1c-dev-tools.externalFiles.clearCache",
         "title": "Очистить кэш",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.dependencies.initializePackagedef",
+        "command": "1c-dev-tools.dependencies.initializePackagedef",
         "title": "Инициализировать packagedef",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.dependencies.install",
+        "command": "1c-dev-tools.dependencies.install",
         "title": "Установить зависимости",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.dependencies.remove",
+        "command": "1c-dev-tools.dependencies.remove",
         "title": "Удалить зависимости",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.build.configuration",
+        "command": "1c-dev-tools.build.configuration",
         "title": "Собрать конфигурацию",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.build.extensions",
+        "command": "1c-dev-tools.build.extensions",
         "title": "Собрать расширения",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.build.externalProcessor",
+        "command": "1c-dev-tools.build.externalProcessor",
         "title": "Собрать внешнюю обработку",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.build.externalReport",
+        "command": "1c-dev-tools.build.externalReport",
         "title": "Собрать внешний отчет",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.decompile.configuration",
+        "command": "1c-dev-tools.decompile.configuration",
         "title": "Разобрать конфигурацию",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.decompile.externalProcessor",
+        "command": "1c-dev-tools.decompile.externalProcessor",
         "title": "Разобрать внешнюю обработку",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.decompile.externalReport",
+        "command": "1c-dev-tools.decompile.externalReport",
         "title": "Разобрать внешний отчет",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.decompile.extension",
+        "command": "1c-dev-tools.decompile.extension",
         "title": "Разобрать расширение",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.run.enterprise",
+        "command": "1c-dev-tools.run.enterprise",
         "title": "Запустить Предприятие",
         "category": "1C",
         "icon": "$(play)"
       },
       {
-        "command": "1c-platform-tools.run.designer",
+        "command": "1c-dev-tools.run.designer",
         "title": "Запустить Конфигуратор",
         "category": "1C",
         "icon": "$(tools)"
       },
       {
-        "command": "1c-platform-tools.launch.view",
+        "command": "1c-dev-tools.launch.view",
         "title": "Просмотр задач (workspace)",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.launch.run",
+        "command": "1c-dev-tools.launch.run",
         "title": "Запустить задачу",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.launch.edit",
+        "command": "1c-dev-tools.launch.edit",
         "title": "Редактировать задачи",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.launch.editConfigurations",
+        "command": "1c-dev-tools.launch.editConfigurations",
         "title": "Редактировать конфигурации запуска",
         "category": "1C"
       },
       {
-        "command": "1c-platform-tools.file.open",
+        "command": "1c-dev-tools.file.open",
         "title": "Открыть файл"
       },
       {
-        "command": "1c-platform-tools.config.env.edit",
+        "command": "1c-dev-tools.config.env.edit",
         "title": "Редактировать env.json",
         "category": "1C"
       }
@@ -296,75 +383,80 @@
     "menus": {
       "view/title": [
         {
-          "command": "1c-platform-tools.refresh",
-          "when": "view == 1c-platform-tools-panel-view",
+          "command": "1c-dev-tools.refresh",
+          "when": "view == 1c-dev-tools-panel-view",
           "group": "navigation"
         },
         {
-          "command": "1c-platform-tools.settings",
-          "when": "view == 1c-platform-tools-panel-view",
+          "command": "1c-dev-tools.settings",
+          "when": "view == 1c-dev-tools-panel-view",
           "group": "navigation"
         }
       ],
       "editor/context": []
     },
     "configuration": {
-      "title": "1C Platform Tools",
+      "title": "1C Dev Tools",
       "properties": {
-        "1c-platform-tools.onescriptPath": {
+        "1c-dev-tools.onescriptPath": {
           "type": "string",
           "default": "oscript",
           "description": "Путь к исполняемому файлу OneScript"
         },
-        "1c-platform-tools.opm.path": {
+        "1c-dev-tools.opm.path": {
           "type": "string",
           "default": "opm",
           "description": "Путь к opm (OneScript Package Manager)"
         },
-        "1c-platform-tools.vrunner.path": {
+        "1c-dev-tools.vrunner.path": {
           "type": "string",
           "default": "vrunner",
           "description": "Путь к vrunner (vanessa-runner)"
         },
-        "1c-platform-tools.vrunner.initSettingsPath": {
+        "1c-dev-tools.vrunner.initSettingsPath": {
           "type": "string",
           "default": "./tools/vrunner.init.json",
           "description": "Путь к файлу настроек инициализации vrunner (vrunner.init.json)"
         },
-        "1c-platform-tools.paths.build": {
+        "1c-dev-tools.paths.build": {
           "type": "string",
           "default": "build/out",
           "description": "Путь к папке сборки"
         },
-        "1c-platform-tools.paths.src": {
+        "1c-dev-tools.paths.src": {
           "type": "string",
           "default": "src/cf",
           "description": "Путь к исходникам конфигурации"
         },
-        "1c-platform-tools.paths.cfe": {
+        "1c-dev-tools.paths.cfe": {
           "type": "string",
           "default": "src/cfe",
           "description": "Путь к исходникам расширений"
         },
-        "1c-platform-tools.paths.epf": {
+        "1c-dev-tools.paths.epf": {
           "type": "string",
           "default": "src/epf",
           "description": "Путь к исходникам внешних обработок"
         },
-        "1c-platform-tools.paths.erf": {
+        "1c-dev-tools.paths.erf": {
           "type": "string",
           "default": "src/erf",
           "description": "Путь к исходникам внешних отчетов"
         },
-        "1c-platform-tools.paths.commit": {
+        "1c-dev-tools.paths.commit": {
           "type": "string",
           "default": "${workspaceFolder}\\build\\commit\\commit.txt",
           "description": "Путь к файлу Commit.txt"
         },
-        "1c-platform-tools.ideTasks.autoCreate": {
+        "1c-dev-tools.ideTasks.autoCreate": {
           "type": "boolean",
           "default": true,
           "description": "Автоматически создавать задачи IDE после выполнения команд"
+        },
+        "1c-dev-tools.debug.logProtocol": {
+          "type": "boolean",
+          "default": false,
+          "description": "Вести протокол отладки RDBG (%TEMP%\\PlatformTools-rdbg-protocol)"
         }
       }
     }
@@ -376,7 +468,14 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
+    "test:rdbg": "node scripts/test-rdbg-debug.mjs",
+    "proxy:rdbg": "node scripts/rdbg-traffic-proxy.mjs",
     "package": "vsce package"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0",
+    "@vscode/debugprotocol": "^1.68.0",
+    "fast-xml-parser": "^4.5.0"
   },
   "devDependencies": {
     "@types/node": "22.x",

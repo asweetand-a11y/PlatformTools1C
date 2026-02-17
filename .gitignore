@@ -10,7 +10,8 @@ AGENTS.md
 .vscode/
 .cursorignore
 .vscodeignore
-src/
+#src/
+docs/
 
 
 # VS Code расширение
