@@ -820,16 +820,17 @@ export class RdbgClient {
 					binary.objectId && binary.propertyId
 						? { type: 'ConfigModule' as const, extensionName: '', objectId: binary.objectId, propertyId: binary.propertyId }
 						: undefined;
-				const callStack: StackItemViewInfoData[] =
-					binary.presentations.length > 0
-						? binary.presentations.map((presentation, i) => ({
-								moduleId,
-								lineNo: i === 0 ? 1 : 0,
-								presentation,
-						  }))
-						: moduleId
-							? [{ moduleId, lineNo: 1, presentation: '' }]
-							: [];
+				// Бинарный формат: presentations [root, ..., current] — переворачиваем для DAP [current, ..., root]
+			const rawStack = binary.presentations.length > 0
+				? binary.presentations.map((presentation, i) => ({
+						moduleId,
+						lineNo: i === binary.presentations.length - 1 ? 1 : 0,
+						presentation,
+				  }))
+				: moduleId
+					? [{ moduleId, lineNo: 1, presentation: '' }]
+					: [];
+			const callStack: StackItemViewInfoData[] = rawStack.reverse();
 				result = {
 					callStackFormed: {
 						callStack: callStack.length > 0 ? callStack : [],
@@ -1179,10 +1180,7 @@ function parseCallStackFormedFromPingResponse(xml: string): CallStackFormedResul
 			else if (suspendedByOther) reason = 'Step';
 
 			const stackItems = Array.isArray(callStack) ? callStack : [callStack];
-			// ВАЖНО: порядок стека от сервера должен быть проверен тестированием.
-			// DAP ожидает [current, ..., root] (stackFrames[0] = текущая позиция).
-			// Если сервер отдаёт [root, ..., current], нужно добавить .reverse() здесь.
-			// Текущая реализация предполагает, что сервер уже отдаёт правильный порядок.
+			// Сервер отдаёт [root, parent, current] — DAP ожидает [current, ..., root]
 			const callStackData: StackItemViewInfoData[] = stackItems.map((si: unknown) => {
 				const s = si as Record<string, unknown>;
 				const mid = s.moduleId ?? s.ModuleId;
@@ -1213,7 +1211,7 @@ function parseCallStackFormedFromPingResponse(xml: string): CallStackFormedResul
 				};
 			});
 
-			return { callStack: callStackData, targetId, reason, stopByBp: !!stopByBp, suspendedByOther: !!suspendedByOther };
+			return { callStack: callStackData.reverse(), targetId, reason, stopByBp: !!stopByBp, suspendedByOther: !!suspendedByOther };
 		}
 	} catch {
 		// игнорируем ошибки парсинга
@@ -1326,8 +1324,9 @@ function parsePingDebugUIParamsResponse(xml: string): PingDebugUIParamsResult | 
 
 				const dataBase64Raw = resp.resultStr ?? resp.ResultStr ?? obj.resultStr ?? obj.ResultStr;
 				const dataBase64 = typeof dataBase64Raw === 'string' && dataBase64Raw.trim() !== '' ? dataBase64Raw.trim() : undefined;
+				// Сервер отдаёт [root, parent, current] — DAP ожидает [current, ..., root]
 				pingResult.callStackFormed = {
-					callStack: callStackData,
+					callStack: [...callStackData].reverse(),
 					targetId,
 					targetIDStr,
 					reason,
@@ -1472,7 +1471,8 @@ function parseCallStackResponse(xml: string): StackItemViewInfoData[] {
 		const callStack = r.callStack ?? r.CallStack ?? r.callstack ?? [];
 		
 		const stackItems = Array.isArray(callStack) ? callStack : [callStack];
-		return stackItems.map((si: unknown) => {
+		// Сервер отдаёт [root, parent, current] — DAP ожидает [current, ..., root], переворачиваем
+		const result = stackItems.map((si: unknown) => {
 			const s = si as Record<string, unknown>;
 			const mid = s.moduleId ?? s.ModuleId;
 			let moduleId: BslModuleIdInternal | undefined;
@@ -1500,6 +1500,7 @@ function parseCallStackResponse(xml: string): StackItemViewInfoData[] {
 				isFantom: !!(s.isFantom ?? s.IsFantom),
 			};
 		});
+		return result.reverse();
 	} catch {
 		return [];
 	}

@@ -246,7 +246,7 @@ export class OnecDebugSession extends DebugSession {
 		this.evalExprCache.clear();
 	}
 
-	/** После остановки (F10/F11/Shift+F11) открыть файл модуля BSL на текущей строке. Задержка 150 ms — чтобы панель отладки успела обновиться. */
+	/** После остановки (F10/F11/Shift+F11) открыть файл модуля BSL на текущей строке. Задержка 100 ms — чтобы панель отладки успела обновиться. */
 	private revealCurrentFrameInEditor(threadId: number): void {
 		setTimeout(() => {
 			const stack = this.threadsCallStack.get(threadId);
@@ -262,7 +262,21 @@ export class OnecDebugSession extends DebugSession {
 			if (!sourcePath && item.moduleIdStr?.trim()) {
 				sourcePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
 			}
-			if (!sourcePath) return;
+			if (!sourcePath) {
+				// Fallback: активный редактор .bsl — при отладке пользователь обычно держит нужный модуль открытым
+				const active = vscode.window.activeTextEditor;
+				if (active?.document.fileName.toLowerCase().endsWith('.bsl')) {
+					sourcePath = active.document.uri.fsPath;
+				}
+			}
+			if (!sourcePath) {
+				const lineNo = item.lineNo ?? '?';
+				this.sendEvent(new OutputEvent(
+					`[DEBUG] reveal: не найден путь (rootProject=${root || '(пусто)'}, objectId=${objectId || '—'}, propertyId=${propertyId || '—'}, moduleIdStr=${(item.moduleIdStr || '').slice(0, 60) || '—'}, lineNo=${lineNo})\n`,
+					'console',
+				));
+				return;
+			}
 			const fullPath = path.isAbsolute(sourcePath) ? sourcePath : path.resolve(root, sourcePath);
 			const line = typeof item.lineNo === 'number' ? item.lineNo : parseInt(String(item.lineNo ?? 0), 10) || 1;
 			const line0 = Math.max(0, line - 1);
@@ -273,10 +287,10 @@ export class OnecDebugSession extends DebugSession {
 				preview: false,
 				viewColumn: vscode.ViewColumn.One,
 			});
-		}, 150);
+		}, 100);
 	}
 
-	/** После шага (F10/F11/Shift+F11) через 400 ms запрашивает getCallStack (fallback, если ping не вернул callStackFormed). При приходе callStackFormed таймер отменяется. */
+	/** После шага (F10/F11/Shift+F11) через 150 ms запрашивает getCallStack. Ping может вернуть бинарный стек без moduleIdStr/lineNo — getCallStack даёт полный XML для reveal. */
 	private scheduleRefreshStackAndReveal(threadId: number): void {
 		const existing = this.pendingStackRefreshTimeouts.get(threadId);
 		if (existing !== undefined) clearTimeout(existing);
@@ -301,7 +315,7 @@ export class OnecDebugSession extends DebugSession {
 			} catch {
 				// игнорируем
 			}
-		}, 400);
+		}, 150);
 		this.pendingStackRefreshTimeouts.set(threadId, timeoutId);
 	}
 
@@ -497,11 +511,12 @@ export class OnecDebugSession extends DebugSession {
 				}
 
 				// Ping отдаёт стек в порядке [current, parent, root]. revealCurrentFrameInEditor использует stack[0]=current.
+				// Ping может вернуть бинарный формат без moduleIdStr и lineNo — getCallStack даст полный XML. Не отменяем scheduleRefreshStackAndReveal.
 				const stackOrdered = csf.callStack;
 				this.threadsCallStack.set(threadId, stackOrdered);
-				this.cancelPendingStackRefresh(threadId);
 				this.sendEvent(new StoppedEvent(csf.reason, threadId));
 				this.revealCurrentFrameInEditor(threadId);
+				// getCallStack выполнится по таймеру и обновит стек полными данными (moduleIdStr, lineNo), затем reveal снова
 			}
 		} catch {
 			// игнорируем ошибки опроса
@@ -1186,23 +1201,53 @@ export class OnecDebugSession extends DebugSession {
 					return r;
 				},
 			};
+			const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
+			const targetReq = { id: target.id };
 			let result: { variables: Array<{ name: string; value: string; typeName?: string }> };
+			let usedBatchFirst = false;
 			try {
-				result = await this.rdbgClient.evalLocalVariables(
-					{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
-					{ id: target.id },
-					frameIndex,
-					exprStore,
-				);
-				// При пустом ответе и пустом кэше — один повтор через 80 ms (результат может прийти в ping)
-				if (result.variables.length === 0 && !this.localsCache.get(localsCacheKey)?.length) {
-					await new Promise((r) => setTimeout(r, 80));
-					result = await this.rdbgClient.evalLocalVariables(
-						{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
-						{ id: target.id },
-						frameIndex,
-						exprStore,
-					);
+				// Batch-first: если знаем имена переменных из процедуры — один запрос (variables + children)
+				const stack = this.threadsCallStack.get(threadId) ?? [];
+				const item = stack[frameIndex];
+				let expandableFromProc: string[] = [];
+				if (item && typeof item.lineNo !== 'undefined') {
+					const root = this.rootProject || '';
+					let modulePath = '';
+					if (item.moduleId?.objectId && item.moduleId?.propertyId) {
+						modulePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId);
+					}
+					if (!modulePath && item.moduleIdStr?.trim()) {
+						modulePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
+					}
+					if (!modulePath) {
+						const active = vscode.window.activeTextEditor;
+						if (active?.document.fileName.toLowerCase().endsWith('.bsl')) {
+							modulePath = active.document.uri.fsPath;
+						}
+					}
+					if (modulePath) {
+						const lineNo = typeof item.lineNo === 'number' ? item.lineNo : parseInt(String(item.lineNo ?? 0), 10) || 1;
+						expandableFromProc = await getVariableNamesFromProcedureAtLine(modulePath, lineNo, root);
+					}
+				}
+				if (expandableFromProc.length > 0) {
+					usedBatchFirst = true;
+					const batch = await this.rdbgClient.evalLocalVariablesBatch(base, targetReq, frameIndex, expandableFromProc, exprStore);
+					result = { variables: batch.variables };
+					for (const [expr, evalResult] of Object.entries(batch.childrenByExpression)) {
+						this.evalExprCache.set(`${target.id}:${frameIndex}:${expr}`, {
+							result: evalResult.result ?? '',
+							typeName: evalResult.typeName,
+							children: evalResult.children,
+							variablesRef: 0,
+						});
+					}
+				} else {
+					result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
+					if (result.variables.length === 0 && !this.localsCache.get(localsCacheKey)?.length) {
+						await new Promise((r) => setTimeout(r, 80));
+						result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
+					}
 				}
 			} catch (err) {
 				// 400 «выполнение вычислений возможно только в остановленном предмете отладки» — отдаём кэш или пустой список, чтобы колесо не крутилось
@@ -1279,11 +1324,21 @@ export class OnecDebugSession extends DebugSession {
 				} else {
 					const stack = this.threadsCallStack.get(threadId) ?? [];
 					const item = stack[frameIndex];
-					if (item?.moduleId && typeof item.lineNo !== 'undefined') {
-						const objectId = item.moduleId.objectId ?? '';
-						const propertyId = item.moduleId.propertyId ?? '';
+					if (item && typeof item.lineNo !== 'undefined') {
 						const root = this.rootProject || '';
-						const modulePath = getModulePathByObjectProperty(root, objectId, propertyId);
+						let modulePath = '';
+						if (item.moduleId?.objectId && item.moduleId?.propertyId) {
+							modulePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId);
+						}
+						if (!modulePath && item.moduleIdStr?.trim()) {
+							modulePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
+						}
+						if (!modulePath) {
+							const active = vscode.window.activeTextEditor;
+							if (active?.document.fileName.toLowerCase().endsWith('.bsl')) {
+								modulePath = active.document.uri.fsPath;
+							}
+						}
 						const lineNo = typeof item.lineNo === 'number' ? item.lineNo : parseInt(String(item.lineNo ?? 0), 10) || 1;
 						if (modulePath) {
 							const names = await getVariableNamesFromProcedureAtLine(modulePath, lineNo, root);
@@ -1299,25 +1354,21 @@ export class OnecDebugSession extends DebugSession {
 			}
 
 			sendOnce({ variables });
-			// Один батч-запрос по всем раскрываемым переменным (вместо N отдельных evalExpr) — при раскрытии данные уже в кэше
-			const expandableNames = result.variables.filter((v) => isExpandableType(v.typeName)).map((v) => v.name);
-			if (expandableNames.length > 0) {
-				void this.rdbgClient.evalLocalVariablesBatch(
-					{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
-					{ id: target.id },
-					frameIndex,
-					expandableNames,
-					exprStore,
-				).then((batch) => {
-					for (const [expr, evalResult] of Object.entries(batch.childrenByExpression)) {
-						this.evalExprCache.set(`${target.id}:${frameIndex}:${expr}`, {
-							result: evalResult.result ?? '',
-							typeName: evalResult.typeName,
-							children: evalResult.children,
-							variablesRef: 0,
-						});
-					}
-				}).catch(() => {});
+			// Батч по раскрываемым — только если не использовали batch-first (children уже в кэше)
+			if (!usedBatchFirst) {
+				const expandableNames = result.variables.filter((v) => isExpandableType(v.typeName)).map((v) => v.name);
+				if (expandableNames.length > 0) {
+					void this.rdbgClient.evalLocalVariablesBatch(base, targetReq, frameIndex, expandableNames, exprStore).then((batch) => {
+						for (const [expr, evalResult] of Object.entries(batch.childrenByExpression)) {
+							this.evalExprCache.set(`${target.id}:${frameIndex}:${expr}`, {
+								result: evalResult.result ?? '',
+								typeName: evalResult.typeName,
+								children: evalResult.children,
+								variablesRef: 0,
+							});
+						}
+					}).catch(() => {});
+				}
 			}
 		} finally {
 			if (!responseSent) {
