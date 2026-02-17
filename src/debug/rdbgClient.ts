@@ -45,12 +45,10 @@ import { NS, ResponseSchema, DbguiExtCmds } from './xdtoSchema';
 /** Кодировка запросов к серверу отладки 1С: при true — Windows-1251 (кириллица в evalExpr), иначе UTF-8. Ответы всегда декодируем как UTF-8 (имена/значения переменных в панели VARIABLES приходят в UTF-8). */
 const RDBG_REQUEST_WINDOWS_1251 = true;
 
-/** Таймаут для получения переменных (мс): задержки между retry. */
-/** Задержка между итерациями retry при пустом ответе evalLocalVariables/evalExpr. 50 ms — как в Конфигураторе (ориентир 50–80 ms). */
-const VAR_FETCH_DELAY_MS = 50;
-
-/** calcWaitingTime в запросах evalLocalVariables/evalExpr — время ожидания сервером результата. 100 как в Конфигураторе; 25 слишком мало — сервер возвращает пустой ответ. */
-const CALC_WAITING_TIME_MS = 100;
+/** Значения по умолчанию для таймингов (если конфиг не передан). */
+const DEFAULT_VAR_FETCH_DELAY_MS = 50;
+const DEFAULT_CALC_WAITING_TIME_MS = 100;
+const DEFAULT_EVAL_EXPR_RETRY_DELAYS_MS = [50, 100] as readonly number[];
 
 function buildBaseRequestXml(base: RDbgBaseRequest): string {
 	return `<infoBaseAlias>${escapeXml(base.infoBaseAlias)}</infoBaseAlias><idOfDebuggerUI>${escapeXml(base.idOfDebuggerUi)}</idOfDebuggerUI>`;
@@ -134,6 +132,7 @@ function buildEvalLocalVariablesRequestBody(
 	base: RDbgBaseRequest,
 	targetId: DebugTargetIdLight,
 	_stackLevel: number,
+	calcWaitingTime = DEFAULT_CALC_WAITING_TIME_MS,
 ): { body: string; expressionResultID: string } {
 	const alias = escapeXml(base.infoBaseAlias);
 	const dbgui = escapeXml(base.idOfDebuggerUi);
@@ -153,7 +152,7 @@ function buildEvalLocalVariablesRequestBody(
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${calcWaitingTime}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlock +
 		`</request>`;
@@ -166,6 +165,7 @@ function buildEvalExprRequestBody(
 	targetId: DebugTargetIdLight,
 	expression: string,
 	_frameIndex: number,
+	calcWaitingTime = DEFAULT_CALC_WAITING_TIME_MS,
 ): { body: string; expressionResultID: string } {
 	const alias = escapeXml(base.infoBaseAlias);
 	const dbgui = escapeXml(base.idOfDebuggerUi);
@@ -187,7 +187,7 @@ function buildEvalExprRequestBody(
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${calcWaitingTime}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlock +
 		`</request>`;
@@ -200,6 +200,7 @@ function buildEvalLocalVariablesBatchRequestBody(
 	targetId: DebugTargetIdLight,
 	_stackLevel: number,
 	expandableExpressions: string[],
+	calcWaitingTime = DEFAULT_CALC_WAITING_TIME_MS,
 ): { body: string; expressionResultIDs: string[] } {
 	const alias = escapeXml(base.infoBaseAlias);
 	const dbgui = escapeXml(base.idOfDebuggerUi);
@@ -240,7 +241,7 @@ function buildEvalLocalVariablesBatchRequestBody(
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${calcWaitingTime}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlocks.join('') +
 		`</request>`;
@@ -470,9 +471,18 @@ function buildSetBreakpointsBody(req: RdbgSetBreakpointsRequest): string {
 		`</request>`;
 }
 
+/** Настройки таймингов RDBG (из 1c-dev-tools.debug.timings). */
+export interface RdbgTimingConfig {
+	varFetchDelayMs: number;
+	calcWaitingTimeMs: number;
+	evalExprRetryDelaysMs: number[];
+}
+
 export interface RdbgClientOptions {
 	/** Включить запись протокола в %TEMP%/PlatformTools-rdbg-protocol (настройка 1c-dev-tools.debug.logProtocol) */
 	logProtocol?: boolean;
+	/** Тайминги для retry и calcWaitingTime (из настроек расширения). */
+	timing?: RdbgTimingConfig;
 }
 
 export class RdbgClient {
@@ -481,10 +491,17 @@ export class RdbgClient {
 	private protocolLogDir: string | null = null;
 	private protocolSeq = 0;
 	private logProtocol: boolean;
+	private varFetchDelayMs: number;
+	private calcWaitingTimeMs: number;
+	private evalExprRetryDelaysMs: readonly number[];
 
 	constructor(host: string, port: number, options?: RdbgClientOptions) {
 		this.baseUrl = `http://${host}:${port}/e1crdbg`;
 		this.logProtocol = options?.logProtocol ?? false;
+		const t = options?.timing;
+		this.varFetchDelayMs = t?.varFetchDelayMs ?? DEFAULT_VAR_FETCH_DELAY_MS;
+		this.calcWaitingTimeMs = t?.calcWaitingTimeMs ?? DEFAULT_CALC_WAITING_TIME_MS;
+		this.evalExprRetryDelaysMs = t?.evalExprRetryDelaysMs ?? DEFAULT_EVAL_EXPR_RETRY_DELAYS_MS;
 		this.parser = new XMLParser({
 			ignoreDeclaration: true,
 			removeNSPrefix: true,
@@ -789,7 +806,7 @@ export class RdbgClient {
 		expression: string,
 		frameIndex: number,
 	): Promise<EvalExprResult> {
-		const { body, expressionResultID } = buildEvalExprRequestBody(base, targetId, expression, frameIndex);
+		const { body, expressionResultID } = buildEvalExprRequestBody(base, targetId, expression, frameIndex, this.calcWaitingTimeMs);
 		let xml = await this.postXml('evalExpr', body);
 		let parsed = parseEvalExprResult(xml);
 		let hasContent = parsed.result !== '' || (parsed.children && parsed.children.length > 0) || parsed.error;
@@ -797,7 +814,7 @@ export class RdbgClient {
 
 		// При пустом ответе — retry полного запроса: серверу нужно больше времени для вычисления (calcWaitingTime 100, задержки 50, 100 ms)
 		{
-			for (const delayMs of [50, 100]) {
+			for (const delayMs of this.evalExprRetryDelaysMs) {
 				await new Promise((r) => setTimeout(r, delayMs));
 				xml = await this.postXml('evalExpr', body);
 				parsed = parseEvalExprResult(xml);
@@ -807,7 +824,7 @@ export class RdbgClient {
 		}
 
 		for (let i = 0; i < 4; i++) {
-			if (i > 0) await new Promise((r) => setTimeout(r, VAR_FETCH_DELAY_MS));
+			if (i > 0) await new Promise((r) => setTimeout(r, this.varFetchDelayMs));
 			const pingResult = await this.pingDebugUIParams(base);
 			const found = pingResult?.exprEvaluated?.find((e) => e.expressionResultID === expressionResultID);
 			if (found) return found.result;
@@ -939,7 +956,7 @@ export class RdbgClient {
 		stackLevel: number,
 		exprEvaluatedStore?: ExprEvaluatedStore,
 	): Promise<EvalLocalVariablesResult> {
-		const { body, expressionResultID } = buildEvalLocalVariablesRequestBody(base, targetId, stackLevel);
+		const { body, expressionResultID } = buildEvalLocalVariablesRequestBody(base, targetId, stackLevel, this.calcWaitingTimeMs);
 		const raw = await this.postXml('evalLocalVariables', body);
 		const decoded = decodeBase64FromResponse(raw);
 		const xml = decoded.trim() ? decoded : raw;
@@ -959,7 +976,7 @@ export class RdbgClient {
 				}
 			}
 			// Ждём только после первой итерации
-			if (i > 0) await new Promise((r) => setTimeout(r, VAR_FETCH_DELAY_MS));
+			if (i > 0) await new Promise((r) => setTimeout(r, this.varFetchDelayMs));
 			const pingResult = await this.pingDebugUIParams(base);
 			const found = pingResult?.exprEvaluated?.find((e) => e.expressionResultID === expressionResultID);
 			if (found) {
@@ -984,7 +1001,7 @@ export class RdbgClient {
 		expandableExpressions: string[],
 		exprEvaluatedStore?: ExprEvaluatedStore,
 	): Promise<EvalLocalVariablesBatchResult> {
-		const { body, expressionResultIDs } = buildEvalLocalVariablesBatchRequestBody(base, targetId, stackLevel, expandableExpressions);
+		const { body, expressionResultIDs } = buildEvalLocalVariablesBatchRequestBody(base, targetId, stackLevel, expandableExpressions, this.calcWaitingTimeMs);
 		const raw = await this.postXml('evalLocalVariables', body);
 		const decoded = decodeBase64FromResponse(raw);
 		const xml = decoded.trim() ? decoded : raw;
@@ -1020,7 +1037,7 @@ export class RdbgClient {
 				}
 			}
 			if (missingIds.size === 0) break;
-			if (poll > 0) await new Promise((r) => setTimeout(r, VAR_FETCH_DELAY_MS));
+			if (poll > 0) await new Promise((r) => setTimeout(r, this.varFetchDelayMs));
 			for (const ev of (await this.pingDebugUIParams(base))?.exprEvaluated ?? []) {
 				consumeFromStoreOrPing(ev);
 			}

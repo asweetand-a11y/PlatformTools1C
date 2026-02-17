@@ -23,6 +23,7 @@ import { getLastDbgsLaunch } from './dbgsLaunchInfo';
 import { format1cv8cCommandLine, launch1cv8c, resolvePlatformBin } from './launch1cv8c';
 import { getVariableNamesFromProcedureAtLine } from './bslProcedureVariables';
 import { getModuleInfoByPath, getModulePathByModuleIdStr, getModulePathByObjectProperty } from './metadataProvider';
+import { getDebugTimingConfig } from './debugTimingConfig';
 import { RdbgClient } from './rdbgClient';
 import {
 	AttachDebugUiResult,
@@ -62,21 +63,6 @@ interface StoredBreakpoints {
 	source: DebugProtocol.Source;
 	breakpoints: DebugProtocol.SourceBreakpoint[];
 }
-
-/** Интервал опроса ping (rdbg pingDebugUIParams). В Конфигураторе 1С ping вызывается реже (по трафику rtgt?cmd=pingDBGTGT и rdbg?cmd=pingDebugUIParams — порядка сотен вызовов за сессию, не каждые 25 ms). */
-const PING_INTERVAL_MS = 150;
-
-/** Задержка retry для variablesRequest, scheduleRefreshStackAndReveal, evaluateRequest. 50 ms — как в Конфигураторе. */
-const VAR_FETCH_DELAY_MS = 50;
-
-/** Задержка scheduleRefreshStackAndReveal для Step In/Out — серверу нужно больше времени для входа в процедуру. */
-const STEP_IN_OUT_DELAY_MS = 75;
-
-/** После F11/Shift+F11 — интервалы немедленного ping для вылова callStackFormed (сервер может отдать его в ping раньше, чем getCallStack готов). */
-const IMMEDIATE_PING_DELAYS_MS = [50, 100, 200];
-
-/** Минимальный интервал между вызовами pingDBGTGT по одной цели (чтобы не засорять логи и не нагружать сервер). */
-const PING_DBGTGT_INTERVAL_MS = 5000;
 
 /** Отображаемое имя типа цели в Call Stack (перевод на русский). */
 const TARGET_TYPE_LABELS: Record<string, string> = {
@@ -152,6 +138,8 @@ export class OnecDebugSession extends DebugSession {
 	private autoAttachTypes: string[] = [];
 	/** Процесс 1cv8c, запущенный в режиме launch. Нужен для завершения при остановке отладки. */
 	private launchedProcess: ChildProcess | undefined;
+	/** Настройки таймингов (1c-dev-tools.debug.timings). Загружаются при launch/attach. */
+	private timingConfig = getDebugTimingConfig();
 
 	constructor() {
 		super();
@@ -237,7 +225,7 @@ export class OnecDebugSession extends DebugSession {
 
 	private startPingPolling(): void {
 		this.stopPingPolling();
-		this.pingTimer = setInterval(() => this.pollPing(), PING_INTERVAL_MS);
+		this.pingTimer = setInterval(() => this.pollPing(), this.timingConfig.pingIntervalMs);
 	}
 
 	private stopPingPolling(): void {
@@ -304,7 +292,7 @@ export class OnecDebugSession extends DebugSession {
 		this.pendingStackRefreshTimeouts.delete(threadId);
 		const target = this.targets[threadId - 1] ?? this.targets[0];
 		if (!this.rdbgClient || !this.attached || !target?.id) return;
-		const delayMs = stepInOrOut ? STEP_IN_OUT_DELAY_MS : VAR_FETCH_DELAY_MS;
+		const delayMs = stepInOrOut ? this.timingConfig.stepInOutDelayMs : this.timingConfig.varFetchDelayMs;
 		const timeoutId = setTimeout(async () => {
 			this.pendingStackRefreshTimeouts.delete(threadId);
 			try {
@@ -335,8 +323,9 @@ export class OnecDebugSession extends DebugSession {
 	private scheduleImmediatePingForCallStack(threadId: number): void {
 		if (!this.rdbgClient || !this.attached) return;
 		const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
-		for (let i = 0; i < IMMEDIATE_PING_DELAYS_MS.length; i++) {
-			const delayMs = IMMEDIATE_PING_DELAYS_MS[i];
+		const delays = this.timingConfig.immediatePingDelaysMs;
+		for (let i = 0; i < delays.length; i++) {
+			const delayMs = delays[i];
 			setTimeout(async () => {
 				if (!this.rdbgClient || !this.attached) return;
 				try {
@@ -617,8 +606,16 @@ export class OnecDebugSession extends DebugSession {
 		}
 
 		try {
+			this.timingConfig = getDebugTimingConfig();
 			const logProtocol = vscode.workspace.getConfiguration('1c-dev-tools').get<boolean>('debug.logProtocol', false);
-			this.rdbgClient = new RdbgClient(host, port, { logProtocol });
+			this.rdbgClient = new RdbgClient(host, port, {
+				logProtocol,
+				timing: {
+					varFetchDelayMs: this.timingConfig.varFetchDelayMs,
+					calcWaitingTimeMs: this.timingConfig.calcWaitingTimeMs,
+					evalExprRetryDelaysMs: this.timingConfig.evalExprRetryDelaysMs,
+				},
+			});
 			await this.rdbgClient.test();
 
 			const attachResponse = await this.rdbgClient.attachDebugUI({
@@ -1229,7 +1226,7 @@ export class OnecDebugSession extends DebugSession {
 				// Один запрос evalLocalVariables (контекст) — быстрее batch, batch в фоне для раскрытия
 				result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
 				if (result.variables.length === 0) {
-					await new Promise((r) => setTimeout(r, VAR_FETCH_DELAY_MS));
+					await new Promise((r) => setTimeout(r, this.timingConfig.varFetchDelayMs));
 					result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
 				}
 			} catch (err) {
@@ -1512,7 +1509,7 @@ export class OnecDebugSession extends DebugSession {
 		} catch (err) {
 			// 400 «только в остановленном предмете» — после F10/F11 повторяем с паузой
 			if (OnecDebugSession.isEvalOnlyWhenStoppedError(err)) {
-				await new Promise((r) => setTimeout(r, VAR_FETCH_DELAY_MS));
+				await new Promise((r) => setTimeout(r, this.timingConfig.varFetchDelayMs));
 				try {
 					const retryResult = await this.rdbgClient.evalExpr(
 						{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },

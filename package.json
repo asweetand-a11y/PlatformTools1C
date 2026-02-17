@@ -544,6 +544,53 @@
           "type": "boolean",
           "default": false,
           "description": "Вести протокол отладки RDBG (%TEMP%\\PlatformTools-rdbg-protocol)"
+        },
+        "1c-dev-tools.debug.timings.varFetchDelayMs": {
+          "type": "number",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 500,
+          "description": "Задержка между retry при пустом ответе evalLocalVariables/evalExpr (мс). Как в Конфигураторе: 50–80."
+        },
+        "1c-dev-tools.debug.timings.calcWaitingTimeMs": {
+          "type": "number",
+          "default": 100,
+          "minimum": 25,
+          "maximum": 500,
+          "description": "calcWaitingTime в RDBG — время ожидания результата вычислений (мс). 100 как в Конфигураторе."
+        },
+        "1c-dev-tools.debug.timings.pingIntervalMs": {
+          "type": "number",
+          "default": 150,
+          "minimum": 50,
+          "maximum": 1000,
+          "description": "Интервал опроса ping (rdbg pingDebugUIParams) в мс."
+        },
+        "1c-dev-tools.debug.timings.stepInOutDelayMs": {
+          "type": "number",
+          "default": 75,
+          "minimum": 25,
+          "maximum": 300,
+          "description": "Задержка scheduleRefreshStackAndReveal для Step In/Out в мс."
+        },
+        "1c-dev-tools.debug.timings.immediatePingDelaysMs": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [50, 100, 200],
+          "description": "Интервалы немедленного ping после F11/Shift+F11 для вылова callStackFormed (мс)."
+        },
+        "1c-dev-tools.debug.timings.evalExprRetryDelaysMs": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [50, 100],
+          "description": "Задержки retry evalExpr при пустом ответе (мс)."
+        },
+        "1c-dev-tools.debug.timings.pingDbgtgtIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Минимальный интервал между pingDBGTGT по одной цели (мс)."
         }
       }
     }

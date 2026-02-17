@@ -89,56 +89,71 @@
   }
 }
 ```
-### Параметры отладки модулей BSL (dbgs.exe)
+### Параметры отладки модулей BSL (утилита dbgs.exe)
 
 При активации расширения `1C Dev Tools`:
- - если сервер отладки локально: выполняется попытка запуска сервера отладки http! Для этого в конфигураторе измените режим запуска отладки на http протокол.
+ - если сервер отладки локально: выполняется попытка запуска сервера отладки dbgs.exe.
  - если сервер отладки удаленно: выполняется попытка подключения.
+ - Для этого в конфигураторе измените режим запуска отладки на http протокол.
 
-Обязательные параметры в `env.json`:
+Параметры в `env.json`:
 
 ```json
 {
-  "default": {
-    "--v8version": "8.3.27",
-    "--v8-platform-root": "${env:PROGRAMFILES}/1cv8",
-    "--debug-server": "<имя сервера отладки или если локально то имя компьютера>",
-    "--debug-port-range": "1560:1591",
-    "--ibconnection": "/F./build/ib",
-    "--infoBase": "Информационная база #2"
-  }
+    "default": {
+        "--ibconnection": "/F./build/ib",
+        "--infoBase": "Имя информационной базы",
+        "--db-user": "Пользователь",
+        "--db-pwd": "Пароль",
+        "--root": ".",
+        "--workspace": ".",
+        "--v8version": "8.3.27",
+        "--v8-platform-root": "${env:PROGRAMFILES}/1cv8",
+        "--debug-server": "Имя компьютера сервера отладки",
+        "--debug-port-range": "1560:1591",
+        "--locale": "ru",
+        "--language": "ru",
+        "--additional": "/DisplayAllFunctions /Lru /iTaxi /TESTMANAGER",
+        "--ordinaryapp": "-1"
+    }
 }
 ```
 
-- `--ibconnection` — строка подключения к ИБ для **запуска 1cv8c** (например `/F./build/ib` или путь к файловой ИБ).
-- `--infoBase` — **имя/алиас ИБ для RDBG** (сервер отладки). Подставляется в запросы как `infoBaseAlias`. Для файловой ИБ в onec-debug-adapter используют `DefAlias`; для серверной — имя из списка баз (например «Информационная база #2»).
-
-В папке с проектом создайте .vscode/launch.json. Параметры `debugServerHost`, `debugServerPort`, `ibconnection`, `infoBase` подставляются из env.json при отсутствии в конфигурации:
+Параметры в `launch.json`:
 
 ```json
 {
-	"version": "0.2.0",
 	"configurations": [
-		{
-			"type": "onec",
-			"request": "launch",
-			"name": "1C: Запуск",
-			"rootProject": "${workspaceFolder}",
-			"autoAttachTypes": ["Client", "Server"]
-		},
-		{
-			"type": "onec",
-			"request": "attach",
-			"name": "1C: Присоединиться",
-			"autoAttachTypes": ["Client", "Server"]
-		}
+	{
+		"type": "onec",
+		"request": "launch",
+		"name": "1C: Запуск",
+		"debugServerHost": "localhost",
+		"debugServerPort": 1560,
+		"infoBaseAlias": "DefAlias",
+		"rootProject": "${workspaceFolder}/src/cf",
+		"autoAttachTypes": [
+			"Client",
+			"Server"
+		]
+	}
 	]
 }
 ```
 
-Соответствие onec-debug-adapter (C#): запуск 1cv8c — по нашему через `/F` и путь из `ibconnection`; в onec используют `/IBNAME` и имя базы из списка. В RDBG мы передаём `infoBaseAlias` из `--infoBase` (как у них InfoBaseName: для файловой ИБ они подставляют «DefAlias», для серверной — Ref из строки подключения). Точки останова в onec передаются только по ObjectId/PropertyId модуля (без URL); у нас при отсутствии метаданных передаётся полный путь в URL.
+В настройках расширения можно управлять таймингами обмена с сервером отладки
 
-Формат XML-запросов RDBG (из EMF-модели EDT): [`docs/RDBG_REQUEST_FORMAT.md`](docs/RDBG_REQUEST_FORMAT.md)
+Параметры настраиваются через **1c-dev-tools.debug.timings**:
+
+| Настройка | По умолчанию | Описание |
+|-----------|--------------|----------|
+| varFetchDelayMs | 50 | Задержка между retry при пустом ответе |
+| calcWaitingTimeMs | 100 | calcWaitingTime в RDBG |
+| pingIntervalMs | 150 | Интервал ping |
+| stepInOutDelayMs | 75 | Задержка для Step In/Out |
+| immediatePingDelaysMs | [50, 100, 200] | Интервалы ping после F11 |
+| evalExprRetryDelaysMs | [50, 100] | Задержки retry evalExpr |
+| pingDbgtgtIntervalMs | 5000 | Интервал pingDBGTGT |
 
 ## Структура проекта
 
