@@ -27,6 +27,7 @@ import { RdbgClient } from './rdbgClient';
 import {
 	AttachDebugUiResult,
 	getAttachResultMessage,
+	type CallStackFormedResult,
 	type DebugTargetId,
 	type DebugStepAction,
 	type EvalExprResult,
@@ -65,8 +66,14 @@ interface StoredBreakpoints {
 /** Интервал опроса ping (rdbg pingDebugUIParams). В Конфигураторе 1С ping вызывается реже (по трафику rtgt?cmd=pingDBGTGT и rdbg?cmd=pingDebugUIParams — порядка сотен вызовов за сессию, не каждые 25 ms). */
 const PING_INTERVAL_MS = 150;
 
-/** Задержка для получения переменных (мс): scheduleRefreshStackAndReveal, retry в variablesRequest/evaluateRequest. Сразу после setBreakOnNextStatement+step — getCallStack и variables. */
+/** Задержка для получения переменных (мс): scheduleRefreshStackAndReveal, retry в variablesRequest/evaluateRequest. */
 const VAR_FETCH_DELAY_MS = 25;
+
+/** Задержка scheduleRefreshStackAndReveal для Step In/Out — серверу нужно больше времени для входа в процедуру. */
+const STEP_IN_OUT_DELAY_MS = 75;
+
+/** После F11/Shift+F11 — интервалы немедленного ping для вылова callStackFormed (сервер может отдать его в ping раньше, чем getCallStack готов). */
+const IMMEDIATE_PING_DELAYS_MS = [50, 100, 200];
 
 /** Минимальный интервал между вызовами pingDBGTGT по одной цели (чтобы не засорять логи и не нагружать сервер). */
 const PING_DBGTGT_INTERVAL_MS = 5000;
@@ -290,13 +297,14 @@ export class OnecDebugSession extends DebugSession {
 		}, 100);
 	}
 
-	/** После шага (F10/F11/Shift+F11) сразу запрашивает getCallStack, отправляет StoppedEvent и invalidate — IDE запросит evalLocalVariables и evalExpr (Watch) без ожидания pollPing (150 ms). */
-	private scheduleRefreshStackAndReveal(threadId: number): void {
+	/** После шага (F10/F11/Shift+F11) запрашивает getCallStack, отправляет StoppedEvent — IDE запросит evalLocalVariables и evalExpr (Watch). */
+	private scheduleRefreshStackAndReveal(threadId: number, stepInOrOut = false): void {
 		const existing = this.pendingStackRefreshTimeouts.get(threadId);
 		if (existing !== undefined) clearTimeout(existing);
 		this.pendingStackRefreshTimeouts.delete(threadId);
 		const target = this.targets[threadId - 1] ?? this.targets[0];
 		if (!this.rdbgClient || !this.attached || !target?.id) return;
+		const delayMs = stepInOrOut ? STEP_IN_OUT_DELAY_MS : VAR_FETCH_DELAY_MS;
 		const timeoutId = setTimeout(async () => {
 			this.pendingStackRefreshTimeouts.delete(threadId);
 			try {
@@ -309,19 +317,60 @@ export class OnecDebugSession extends DebugSession {
 					const stackChanged = !this.isCallStackEqual(current, stack);
 					if (stackChanged) {
 						this.threadsCallStack.set(threadId, stack);
-						// StoppedEvent сразу после getCallStack — IDE запросит evalLocalVariables и evalExpr (Watch); без этого ждали бы callStackFormed в pollPing (до 150 ms)
-						this.sendEvent(new StoppedEvent('step', threadId));
-						// Устанавливаем в Call Stack цель = текущая процедура (frameId 0)
-						const currentFrameId = threadId * 10000 + 1000;
-						this.sendEvent(new InvalidatedEvent(['stack', 'variables'], undefined, currentFrameId));
+						const stoppedEv = new StoppedEvent('step', threadId);
+						(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = false;
+						this.sendEvent(stoppedEv);
+						this.sendEvent(new InvalidatedEvent(['stack', 'variables']));
 						this.revealCurrentFrameInEditor(threadId);
 					}
 				}
 			} catch {
 				// игнорируем
 			}
-		}, VAR_FETCH_DELAY_MS);
+		}, delayMs);
 		this.pendingStackRefreshTimeouts.set(threadId, timeoutId);
+	}
+
+	/** После F11/Shift+F11 — немедленные ping через 50, 100, 200 ms для вылова callStackFormed (сервер отдаёт его в ping раньше, чем getCallStack готов). */
+	private scheduleImmediatePingForCallStack(threadId: number): void {
+		if (!this.rdbgClient || !this.attached) return;
+		const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
+		for (let i = 0; i < IMMEDIATE_PING_DELAYS_MS.length; i++) {
+			const delayMs = IMMEDIATE_PING_DELAYS_MS[i];
+			setTimeout(async () => {
+				if (!this.rdbgClient || !this.attached) return;
+				try {
+					const result = await this.rdbgClient.pingDebugUIParams(base);
+					if (result?.callStackFormed) this.processCallStackFormed(result.callStackFormed);
+				} catch {
+					// игнорируем
+				}
+			}, delayMs);
+		}
+	}
+
+	/** Обработка callStackFormed: сохраняем стек, отправляем StoppedEvent, reveal. */
+	private processCallStackFormed(csf: CallStackFormedResult): void {
+		let threadId = 1;
+		if (csf.targetId?.trim()) {
+			threadId = this.getThreadIdByTargetId(csf.targetId);
+		} else if (csf.targetIDStr && this.targets.length > 0) {
+			const target = this.targets.find((t) => t.targetIDStr === csf.targetIDStr);
+			if (target) threadId = this.getThreadIdByTargetId(target.id);
+		} else if (this.targets.length > 0) {
+			threadId = 1;
+		}
+		if (csf.targetIDStr?.trim()) {
+			const target = this.targets[threadId - 1] ?? this.targets[0];
+			if (target) target.targetIDStr = csf.targetIDStr;
+		}
+		const stackOrdered = csf.callStack;
+		this.threadsCallStack.set(threadId, stackOrdered);
+		const stoppedEv = new StoppedEvent(csf.reason, threadId);
+		(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = false;
+		this.sendEvent(stoppedEv);
+		this.sendEvent(new InvalidatedEvent(['stack', 'variables']));
+		this.revealCurrentFrameInEditor(threadId);
 	}
 
 	/** После получения списка локальных переменных в фоне запрашивает evalExpr по каждой раскрываемой переменной и заполняет evalExprCache — при раскрытии узла данные уже будут в кэше. */
@@ -500,37 +549,7 @@ export class OnecDebugSession extends DebugSession {
 
 			// Событие callStackFormed — останов на брейкпойнте/шаге. StoppedEvent переводит IDE в состояние paused (F10/F11).
 			if (result.callStackFormed) {
-				const csf = result.callStackFormed;
-				let threadId = 1;
-				if (csf.targetId?.trim()) {
-					threadId = this.getThreadIdByTargetId(csf.targetId);
-				} else if (csf.targetIDStr && this.targets.length > 0) {
-					const target = this.targets.find((t) => t.targetIDStr === csf.targetIDStr);
-					if (target) {
-						threadId = this.getThreadIdByTargetId(target.id);
-					}
-				} else if (this.targets.length > 0) {
-					threadId = 1;
-				}
-
-				// Сохраняем targetIDStr в цель — нужен для evalExprStartStop перед step (F10/F11). getDbgTargets часто не отдаёт targetIDStr.
-				if (csf.targetIDStr?.trim()) {
-					const target = this.targets[threadId - 1] ?? this.targets[0];
-					if (target) {
-						target.targetIDStr = csf.targetIDStr;
-					}
-				}
-
-				// Ping отдаёт стек в порядке [current, parent, root]. revealCurrentFrameInEditor использует stack[0]=current.
-				// Ping может вернуть бинарный формат без moduleIdStr и lineNo — getCallStack даст полный XML. Не отменяем scheduleRefreshStackAndReveal.
-				const stackOrdered = csf.callStack;
-				this.threadsCallStack.set(threadId, stackOrdered);
-				this.sendEvent(new StoppedEvent(csf.reason, threadId));
-				// Устанавливаем в Call Stack цель = текущая процедура (frameId 0)
-				const currentFrameId = threadId * 10000 + 1000;
-				this.sendEvent(new InvalidatedEvent(['stack', 'variables'], undefined, currentFrameId));
-				this.revealCurrentFrameInEditor(threadId);
-				// getCallStack выполнится по таймеру и обновит стек полными данными (moduleIdStr, lineNo), затем reveal снова
+				this.processCallStackFormed(result.callStackFormed);
 			}
 		} catch {
 			// игнорируем ошибки опроса
@@ -1217,7 +1236,7 @@ export class OnecDebugSession extends DebugSession {
 				// 400 «только в остановленном предмете» — после F10/F11 сервер может быть ещё не готов, повторяем с паузой
 				if (OnecDebugSession.isEvalOnlyWhenStoppedError(err)) {
 					result = { variables: [] };
-					for (const delayMs of [VAR_FETCH_DELAY_MS, VAR_FETCH_DELAY_MS]) {
+					for (const delayMs of [50, 100, 150]) {
 						await new Promise((r) => setTimeout(r, delayMs));
 						try {
 							result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
@@ -1345,7 +1364,8 @@ export class OnecDebugSession extends DebugSession {
 		_request?: DebugProtocol.Request,
 	): Promise<void> {
 		await this.sendStepAction('StepIn', args.threadId);
-		this.scheduleRefreshStackAndReveal(args.threadId);
+		this.scheduleRefreshStackAndReveal(args.threadId, true);
+		this.scheduleImmediatePingForCallStack(args.threadId);
 		this.sendResponse(response);
 	}
 
@@ -1355,7 +1375,8 @@ export class OnecDebugSession extends DebugSession {
 		_request?: DebugProtocol.Request,
 	): Promise<void> {
 		await this.sendStepAction('StepOut', args.threadId);
-		this.scheduleRefreshStackAndReveal(args.threadId);
+		this.scheduleRefreshStackAndReveal(args.threadId, true);
+		this.scheduleImmediatePingForCallStack(args.threadId);
 		this.sendResponse(response);
 	}
 

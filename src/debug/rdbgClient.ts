@@ -45,8 +45,11 @@ import { NS, ResponseSchema, DbguiExtCmds } from './xdtoSchema';
 /** Кодировка запросов к серверу отладки 1С: при true — Windows-1251 (кириллица в evalExpr), иначе UTF-8. Ответы всегда декодируем как UTF-8 (имена/значения переменных в панели VARIABLES приходят в UTF-8). */
 const RDBG_REQUEST_WINDOWS_1251 = true;
 
-/** Таймаут для получения переменных (мс): calcWaitingTime в запросах evalLocalVariables/evalExpr, задержки между retry. */
+/** Таймаут для получения переменных (мс): задержки между retry. */
 const VAR_FETCH_DELAY_MS = 25;
+
+/** calcWaitingTime в запросах evalLocalVariables/evalExpr — время ожидания сервером результата. 100 как в Конфигураторе; 25 слишком мало — сервер возвращает пустой ответ. */
+const CALC_WAITING_TIME_MS = 100;
 
 function buildBaseRequestXml(base: RDbgBaseRequest): string {
 	return `<infoBaseAlias>${escapeXml(base.infoBaseAlias)}</infoBaseAlias><idOfDebuggerUI>${escapeXml(base.idOfDebuggerUi)}</idOfDebuggerUI>`;
@@ -149,7 +152,7 @@ function buildEvalLocalVariablesRequestBody(
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${VAR_FETCH_DELAY_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlock +
 		`</request>`;
@@ -177,13 +180,13 @@ function buildEvalExprRequestBody(
 		`<debugCalculations:calcItem><debugCalculations:itemType>expression</debugCalculations:itemType><debugCalculations:expression>${exprText}</debugCalculations:expression></debugCalculations:calcItem>` +
 		`<debugCalculations:interfaces>context</debugCalculations:interfaces>` +
 		`</debugCalculations:srcCalcInfo>` +
-		`<debugCalculations:presOptions><debugCalculations:maxTextSize>10240</debugCalculations:maxTextSize></debugCalculations:presOptions>` +
+		`<debugCalculations:presOptions><debugCalculations:maxTextSize>307200</debugCalculations:maxTextSize></debugCalculations:presOptions>` +
 		`</debugRDBGRequestResponse:expr>`;
 	const body = `<?xml version="1.0" encoding="UTF-8"?><request ${EVAL_LOCAL_NAMESPACES}>` +
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${VAR_FETCH_DELAY_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlock +
 		`</request>`;
@@ -228,6 +231,7 @@ function buildEvalLocalVariablesBatchRequestBody(
 			`<debugCalculations:calcItem><debugCalculations:itemType>expression</debugCalculations:itemType><debugCalculations:expression>${exprText}</debugCalculations:expression></debugCalculations:calcItem>` +
 			`<debugCalculations:interfaces>context</debugCalculations:interfaces>` +
 			`</debugCalculations:srcCalcInfo>` +
+			`<debugCalculations:presOptions><debugCalculations:maxTextSize>307200</debugCalculations:maxTextSize></debugCalculations:presOptions>` +
 			`</debugRDBGRequestResponse:expr>`,
 		);
 	}
@@ -235,7 +239,7 @@ function buildEvalLocalVariablesBatchRequestBody(
 		`<debugRDBGRequestResponse:infoBaseAlias>${alias}</debugRDBGRequestResponse:infoBaseAlias>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
 		`<debugRDBGRequestResponse:idOfDebuggerUI>${dbgui}</debugRDBGRequestResponse:idOfDebuggerUI>` +
-		`<debugRDBGRequestResponse:calcWaitingTime>${VAR_FETCH_DELAY_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
+		`<debugRDBGRequestResponse:calcWaitingTime>${CALC_WAITING_TIME_MS}</debugRDBGRequestResponse:calcWaitingTime>` +
 		`<debugRDBGRequestResponse:targetID><id>${id}</id></debugRDBGRequestResponse:targetID>` +
 		exprBlocks.join('') +
 		`</request>`;
@@ -790,9 +794,9 @@ export class RdbgClient {
 		let hasContent = parsed.result !== '' || (parsed.children && parsed.children.length > 0) || parsed.error;
 		if (hasContent) return parsed;
 
-		// При пустом ответе — retry полного запроса (как variablesRequest): сервер может вернуть данные при повторной отправке
+		// При пустом ответе — retry полного запроса: серверу нужно больше времени для вычисления (calcWaitingTime 100, задержки 50, 100 ms)
 		{
-			for (const delayMs of [VAR_FETCH_DELAY_MS, VAR_FETCH_DELAY_MS]) {
+			for (const delayMs of [50, 100]) {
 				await new Promise((r) => setTimeout(r, delayMs));
 				xml = await this.postXml('evalExpr', body);
 				parsed = parseEvalExprResult(xml);
