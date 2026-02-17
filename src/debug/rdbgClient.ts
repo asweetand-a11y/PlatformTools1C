@@ -59,7 +59,7 @@ function buildRequestBody(content: string): string {
 	return `<?xml version="1.0" encoding="UTF-8"?><request xmlns="${NS.debugRDBGRequestResponse}">${content}</request>`;
 }
 
-/** Формат step по трафику Конфигуратора: default NS = debugBaseData, элементы RDBG с префиксом, id внутри targetID в default NS (debugBaseData), два idOfDebuggerUI, без simple. */
+/** Формат step RDBG: default NS = debugBaseData, элементы RDBG с префиксом, id внутри targetID, два idOfDebuggerUI, без simple. */
 const STEP_REQUEST_NAMESPACES =
 	`xmlns="http://v8.1c.ru/8.3/debugger/debugBaseData" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:debugRDBGRequestResponse="${NS.debugRDBGRequestResponse}" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`;
 
@@ -89,7 +89,7 @@ function buildGetCallStackRequestBody(base: RDbgBaseRequest, targetId: DebugTarg
 		`</request>`;
 }
 
-/** Формат clearBreakOnNextStatement/setBreakOnNextStatement по трафику Конфигуратора: debugBaseData + префикс debugRDBGRequestResponse, один idOfDebuggerUI. */
+/** Формат clearBreakOnNextStatement/setBreakOnNextStatement: debugBaseData + префикс debugRDBGRequestResponse, один idOfDebuggerUI. */
 function buildBreakOnNextStatementBody(base: RDbgBaseRequest): string {
 	const alias = escapeXml(base.infoBaseAlias);
 	const dbgui = escapeXml(base.idOfDebuggerUi);
@@ -99,7 +99,7 @@ function buildBreakOnNextStatementBody(base: RDbgBaseRequest): string {
 		`</request>`;
 }
 
-/** Формат attachDetachDbgTargets по трафику Конфигуратора: debugBaseData + префикс, attach, id с вложенным id. */
+/** Формат attachDetachDbgTargets: debugBaseData + префикс, attach, id с вложенным id. */
 function buildAttachDetachDbgTargetsBody(base: RDbgBaseRequest, command: AttachDetachTargetsCommand): string {
 	const alias = escapeXml(base.infoBaseAlias);
 	const dbgui = escapeXml(base.idOfDebuggerUi);
@@ -123,11 +123,11 @@ function buildAttachDetachDbgTargetsBody(base: RDbgBaseRequest, command: AttachD
 		`${attachIdBlocks}</request>`;
 }
 
-/** Формат evalLocalVariables/evalExpr по трафику Конфигуратора: expr с srcCalcInfo (expressionID, expressionResultID, interfaces=context), для evalExpr — calcItem. */
+/** Формат evalLocalVariables/evalExpr: expr с srcCalcInfo (expressionID, expressionResultID, interfaces=context), для evalExpr — calcItem. */
 const EVAL_LOCAL_NAMESPACES =
 	`xmlns="http://v8.1c.ru/8.3/debugger/debugBaseData" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:debugCalculations="http://v8.1c.ru/8.3/debugger/debugCalculations" xmlns:debugRDBGRequestResponse="${NS.debugRDBGRequestResponse}" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`;
 
-/** Локальные переменные: expr с srcCalcInfo (expressionID, expressionResultID, interfaces=context), presOptions maxTextSize. По трафику Конфигуратора stackLevel в запросе не передаётся — сервер возвращает контекст текущего кадра. */
+/** Локальные переменные: expr с srcCalcInfo (expressionID, expressionResultID, interfaces=context), presOptions maxTextSize. stackLevel в запросе не передаётся — сервер возвращает контекст текущего кадра. */
 function buildEvalLocalVariablesRequestBody(
 	base: RDbgBaseRequest,
 	targetId: DebugTargetIdLight,
@@ -280,7 +280,7 @@ function buildRtgtStartRequestBody(base: RDbgBaseRequest, targetId: string): str
 
 const RDRT_NS = NS.dbgtgtRemoteRequestResponse;
 
-/** Формат запроса RemoteDebuggerRunTime по трафику Конфигуратора (D:\traf): default NS debugBaseData, элементы с префиксом dbgtgtRemoteRequestResponse. */
+/** Формат запроса RemoteDebuggerRunTime: default NS debugBaseData, элементы с префиксом dbgtgtRemoteRequestResponse. */
 const RDRT_REQUEST_NAMESPACES =
 	`xmlns="http://v8.1c.ru/8.3/debugger/debugBaseData" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dbgtgtRemoteRequestResponse="${RDRT_NS}" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`;
 
@@ -773,7 +773,7 @@ export class RdbgClient {
 	}
 
 	/**
-	 * Шаг отладки (Continue, Step, StepIn, StepOut). Формат по трафику Конфигуратора (namespace debugBaseData, префикс debugRDBGRequestResponse, без simple).
+	 * Шаг отладки (Continue, Step, StepIn, StepOut). Формат RDBG: namespace debugBaseData, префикс debugRDBGRequestResponse.
 	 */
 	async step(
 		base: RDbgBaseRequest,
@@ -795,7 +795,7 @@ export class RdbgClient {
 	}
 
 	/**
-	 * Вычисление выражения в контексте остановки (evalExpr). Формат по трафику Конфигуратора (default NS debugBaseData, префиксы, два idOfDebuggerUI, calcWaitingTime 100).
+	 * Вычисление выражения в контексте остановки (evalExpr). Формат RDBG: default NS debugBaseData, префиксы, два idOfDebuggerUI, calcWaitingTime.
 	 */
 	/**
 	 * Вычисление выражения (evalExpr). При пустом теле ответа результат может прийти в ping (exprEvaluated) либо при повторном запросе — сервер иногда возвращает пустой ответ до готовности данных.
@@ -947,7 +947,7 @@ export class RdbgClient {
 	}
 
 	/**
-	 * Вычисление локальных переменных (evalLocalVariables). Формат по трафику Конфигуратора (default NS debugBaseData, префиксы, два idOfDebuggerUI, calcWaitingTime 100).
+	 * Вычисление локальных переменных (evalLocalVariables). Формат RDBG: default NS debugBaseData, префиксы, два idOfDebuggerUI, calcWaitingTime.
 	 * При пустом ответе результат может прийти в ping (exprEvaluated). exprEvaluatedStore — из pollPing (race).
 	 */
 	async evalLocalVariables(
@@ -1119,7 +1119,7 @@ export class RdbgClient {
 	}
 
 	/**
-	 * Установка останова на следующем операторе (setBreakOnNextStatement). Как Конфигуратор 1С — перед step для F10/F11.
+	 * Установка останова на следующем операторе (setBreakOnNextStatement). Вызывается перед step для F10/F11.
 	 * Не требует targetIDStr, в отличие от RemoteDebuggerRunTime?evalExprStartStop.
 	 */
 	async setBreakOnNextStatement(base: RDbgBaseRequest): Promise<void> {

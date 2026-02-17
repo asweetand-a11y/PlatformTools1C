@@ -251,11 +251,12 @@ export class OnecDebugSession extends DebugSession {
 			let sourcePath = '';
 			const objectId = (item.moduleId?.objectId ?? '').trim();
 			const propertyId = (item.moduleId?.propertyId ?? '').trim();
+			const extensionName = (item.moduleId?.extensionName ?? '').trim();
 			if (objectId && propertyId) {
-				sourcePath = getModulePathByObjectProperty(root, objectId, propertyId);
+				sourcePath = getModulePathByObjectProperty(root, objectId, propertyId, extensionName);
 			}
 			if (!sourcePath && item.moduleIdStr?.trim()) {
-				sourcePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
+				sourcePath = getModulePathByModuleIdStr(root, item.moduleIdStr, extensionName);
 			}
 			if (!sourcePath) {
 				// Fallback: активный редактор .bsl — при отладке пользователь обычно держит нужный модуль открытым
@@ -277,7 +278,7 @@ export class OnecDebugSession extends DebugSession {
 			const line0 = Math.max(0, line - 1);
 			const uri = vscode.Uri.file(fullPath);
 			void vscode.window.showTextDocument(uri, {
-				// Выделяем всю строку (как в Конфигураторе 1С) — подсветка текущей позиции исполнения
+				// Выделяем всю строку — подсветка текущей позиции исполнения
 				selection: new vscode.Range(line0, 0, line0 + 1, 0),
 				preview: false,
 				viewColumn: vscode.ViewColumn.One,
@@ -593,7 +594,9 @@ export class OnecDebugSession extends DebugSession {
 	): Promise<void> {
 		const host = args.debugServerHost ?? 'localhost';
 		const port = args.debugServerPort ?? 1560;
-		this.rootProject = args.rootProject ?? '';
+		this.rootProject = (args.rootProject ?? '').trim()
+			|| vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+			|| '';
 		this.rdbgInfoBaseAlias = args.infoBaseAlias ?? 'DefAlias';
 
 		// Вывод в Debug Console: PID Cursor и команда запуска dbgs (если dbgs был запущен расширением)
@@ -1034,11 +1037,12 @@ export class OnecDebugSession extends DebugSession {
 				const line = typeof item.lineNo === 'number' ? item.lineNo : parseInt(String(item.lineNo ?? 0), 10) || 1;
 				const presentation = String(item.presentation ?? '').trim() || `[${i}]`;
 				let sourcePath = '';
+				const extName = (item.moduleId?.extensionName ?? '').trim();
 				if (item.moduleId?.objectId && item.moduleId?.propertyId) {
-					sourcePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId);
+					sourcePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId, extName);
 				}
 				if (!sourcePath && item.moduleIdStr?.trim()) {
-					sourcePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
+					sourcePath = getModulePathByModuleIdStr(root, item.moduleIdStr, extName);
 				}
 				if (sourcePath && !path.isAbsolute(sourcePath)) {
 					sourcePath = path.resolve(root, sourcePath);
@@ -1198,7 +1202,7 @@ export class OnecDebugSession extends DebugSession {
 				return;
 			}
 
-			// RDBG возвращает только контекст текущего кадра (как в Конфигураторе — stackLevel не передаётся).
+			// RDBG возвращает только контекст текущего кадра (stackLevel в запросе не передаётся).
 			// Для родительских кадров (frameIndex > 0) переменные недоступны.
 			if (frameIndex > 0) {
 				sendOnce({ variables: [] });
@@ -1287,11 +1291,12 @@ export class OnecDebugSession extends DebugSession {
 				if (item && typeof item.lineNo !== 'undefined') {
 						const root = this.rootProject || '';
 						let modulePath = '';
+						const extName = (item.moduleId?.extensionName ?? '').trim();
 						if (item.moduleId?.objectId && item.moduleId?.propertyId) {
-							modulePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId);
+							modulePath = getModulePathByObjectProperty(root, item.moduleId.objectId, item.moduleId.propertyId, extName);
 						}
 						if (!modulePath && item.moduleIdStr?.trim()) {
-							modulePath = getModulePathByModuleIdStr(root, item.moduleIdStr);
+							modulePath = getModulePathByModuleIdStr(root, item.moduleIdStr, extName);
 						}
 						if (!modulePath) {
 							const active = vscode.window.activeTextEditor;
@@ -1387,7 +1392,7 @@ export class OnecDebugSession extends DebugSession {
 		}
 		const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
 		try {
-			// Как Конфигуратор 1С: rdbg setBreakOnNextStatement перед step — не требует targetIDStr.
+			// rdbg setBreakOnNextStatement перед step — не требует targetIDStr.
 			if (action !== 'Continue') {
 				try {
 					await this.rdbgClient.setBreakOnNextStatement(base);

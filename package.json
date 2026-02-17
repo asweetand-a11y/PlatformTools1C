@@ -2,7 +2,7 @@
   "name": "1c-dev-tools",
   "displayName": "1C Dev Tools",
   "description": "Расширение для Cursor с инструментами разработки для экосистемы 1С. Предоставляет удобный интерфейс для работы с проектами 1С, включая разбор обработок, отчетов и конфигураций.",
-  "version": "2.9.5",
+  "version": "2.9.6",
   "publisher": "whiterabbit",
   "repository": {
     "type": "git",
@@ -87,7 +87,7 @@
               },
               "rootProject": {
                 "type": "string",
-                "description": "Root project path (workspace folder)"
+                "description": "Корень проекта (workspace folder). Опционально: подставляется автоматически из папки workspace (поддерживаются src/cf + src/cfe/*)."
               },
               "platformPath": {
                 "type": "string",
@@ -166,7 +166,6 @@
             "debugServerHost": "localhost",
             "debugServerPort": 1560,
             "infoBaseAlias": "DefAlias",
-            "rootProject": "${workspaceFolder}",
             "autoAttachTypes": [
               "Client",
               "Server"
@@ -184,7 +183,6 @@
               "debugServerHost": "localhost",
               "debugServerPort": 1560,
               "infoBaseAlias": "DefAlias",
-              "rootProject": "${workspaceFolder}",
               "autoAttachTypes": [
                 "Client",
                 "Server"
@@ -201,7 +199,6 @@
               "debugServerHost": "localhost",
               "debugServerPort": 1560,
               "infoBaseAlias": "DefAlias",
-              "rootProject": "${workspaceFolder}",
               "autoAttachTypes": [
                 "Client",
                 "Server"
@@ -550,18 +547,18 @@
           "default": 50,
           "minimum": 10,
           "maximum": 500,
-          "description": "Задержка между retry при пустом ответе evalLocalVariables/evalExpr (мс). Как в Конфигураторе: 50–80."
+          "description": "Задержка между retry при пустом ответе evalLocalVariables/evalExpr (мс). Рекомендуемый диапазон: 50–80."
         },
         "1c-dev-tools.debug.timings.calcWaitingTimeMs": {
           "type": "number",
           "default": 100,
           "minimum": 25,
           "maximum": 500,
-          "description": "calcWaitingTime в RDBG — время ожидания результата вычислений (мс). 100 как в Конфигураторе."
+          "description": "calcWaitingTime в RDBG — время ожидания результата вычислений (мс). Рекомендуемое: 100."
         },
         "1c-dev-tools.debug.timings.pingIntervalMs": {
           "type": "number",
-          "default": 150,
+          "default": 50,
           "minimum": 50,
           "maximum": 1000,
           "description": "Интервал опроса ping (rdbg pingDebugUIParams) в мс."
@@ -587,10 +584,10 @@
         },
         "1c-dev-tools.debug.timings.pingDbgtgtIntervalMs": {
           "type": "number",
-          "default": 5000,
-          "minimum": 1000,
+          "default": 1000,
+          "minimum": 200,
           "maximum": 60000,
-          "description": "Минимальный интервал между pingDBGTGT по одной цели (мс)."
+          "description": "Минимальный интервал между pingDBGTGT по одной цели (мс). По умолчанию 1 с."
         }
       }
     }

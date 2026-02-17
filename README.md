@@ -92,9 +92,10 @@
 ### Параметры отладки модулей BSL (утилита dbgs.exe)
 
 При активации расширения `1C Dev Tools`:
- - если сервер отладки локально: выполняется попытка запуска сервера отладки dbgs.exe.
- - если сервер отладки удаленно: выполняется попытка подключения.
- - Для этого в конфигураторе измените режим запуска отладки на http протокол.
+ - Работает только по протоколу http!
+ - Если сервер отладки локально: выполняется попытка запуска сервера отладки dbgs.exe.
+ - Если сервер отладки удаленно: выполняется попытка подключения.
+ - В конфигураторе измените режим запуска отладки на http протокол.
 
 Параметры в `env.json`:
 
@@ -131,7 +132,6 @@
 		"debugServerHost": "localhost",
 		"debugServerPort": 1560,
 		"infoBaseAlias": "DefAlias",
-		"rootProject": "${workspaceFolder}/src/cf",
 		"autoAttachTypes": [
 			"Client",
 			"Server"
@@ -149,11 +149,11 @@
 |-----------|--------------|----------|
 | varFetchDelayMs | 50 | Задержка между retry при пустом ответе |
 | calcWaitingTimeMs | 100 | calcWaitingTime в RDBG |
-| pingIntervalMs | 150 | Интервал ping |
+| pingIntervalMs | 50 | Интервал ping |
 | stepInOutDelayMs | 75 | Задержка для Step In/Out |
 | immediatePingDelaysMs | [50, 100, 200] | Интервалы ping после F11 |
 | evalExprRetryDelaysMs | [50, 100] | Задержки retry evalExpr |
-| pingDbgtgtIntervalMs | 5000 | Интервал pingDBGTGT |
+| pingDbgtgtIntervalMs | 1000 | Интервал pingDBGTGT |
 
 ## Структура проекта
 
@@ -189,3 +189,4 @@ project/
 
 ## ВАЖНО
 - за основу взят проект https://github.com/yellow-hammer/1c-dev-tools
+- отладка протестирована для базы в файловом варианте на платформе 8.3.27

@@ -82,8 +82,8 @@ export class OnecDebugConfigurationProvider implements vscode.DebugConfiguration
 		config.ibconnection = env['--ibconnection'] ?? config.ibconnection;
 		config.infoBase = env['--infoBase'] ?? config.infoBase;
 		config.infoBaseAlias = config.infoBaseAlias ?? 'DefAlias';
-		// Всегда подставляем папку проекта — иначе маппинг модулей и пути /F неверны
-		config.rootProject = workspaceFolder;
+		// rootProject — корень workspace для маппинга cf + cfe/*. Подставляем автоматически.
+		config.rootProject = (config.rootProject ?? '').trim() || workspaceFolder;
 		config.platformPath = env['--v8-platform-root'] ?? config.platformPath;
 		config.platformVersion = env['--v8version'] ?? config.platformVersion;
 		config.dbUser = env['--db-user'] ?? config.dbUser;

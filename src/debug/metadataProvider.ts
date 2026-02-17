@@ -116,18 +116,24 @@ function normalizePath(p: string): string {
 	return path.resolve(p).replace(/\\/g, '/');
 }
 
-/** Кэш: ключ — нормализованный путь к .bsl, значение — ModuleInfo. По одному кэшу на rootProject. */
+/** Кэш: ключ — normalizePath(workspaceRoot), значение — Map<path, ModuleInfo>. Один кэш на workspace (cf + cfe/*). */
 const cacheByRoot = new Map<string, Map<string, ModuleInfo>>();
 
-function fillCache(rootProject: string): void {
-	const root = normalizePath(rootProject);
-	if (cacheByRoot.has(root)) return;
-
-	const cache = new Map<string, ModuleInfo>();
+/**
+ * Сканирует одну конфигурацию (configRoot с Configuration.xml) и добавляет модули в cache.
+ * extensionName — '' для основной конфигурации, имя папки расширения для src/cfe/<name>.
+ */
+function scanOneConfig(
+	cache: Map<string, ModuleInfo>,
+	configRoot: string,
+	extensionName: string,
+): void {
+	const configXmlPath = path.join(configRoot, 'Configuration.xml');
+	if (!fs.existsSync(configXmlPath)) return;
 
 	function cacheModule(
 		modulePath: string,
-		extension: string,
+		ext: string,
 		objectId: string,
 		propertyId: string,
 		moduleIdString: string,
@@ -135,20 +141,10 @@ function fillCache(rootProject: string): void {
 		bslModuleType: BslModuleTypeEnum,
 	): void {
 		const key = normalizePath(modulePath);
-		cache.set(key, { extension, objectId, propertyId, path: modulePath, moduleIdString, dbModuleType, bslModuleType });
+		cache.set(key, { extension: ext, objectId, propertyId, path: modulePath, moduleIdString, dbModuleType, bslModuleType });
 	}
 
-	// Корень конфигурации: Configuration.xml в rootProject или в src/cf (vanessa-bootstrap)
-	const configXmlInRoot = path.join(rootProject, 'Configuration.xml');
-	const configXmlInSrcCf = path.join(rootProject, 'src', 'cf', 'Configuration.xml');
-	const configXmlPath = fs.existsSync(configXmlInRoot)
-		? configXmlInRoot
-		: fs.existsSync(configXmlInSrcCf)
-			? configXmlInSrcCf
-			: null;
-	const configRoot = configXmlPath ? path.dirname(configXmlPath) : rootProject;
-
-	if (configXmlPath) {
+	{
 		const configObjectId = getObjectIdFromXml(configXmlPath);
 		if (configObjectId) {
 			const extPath = path.join(configRoot, 'Ext');
@@ -165,7 +161,7 @@ function fillCache(rootProject: string): void {
 						const moduleName = path.basename(entry.name, '.bsl');
 						const moduleIdStr = configModuleNames[moduleName] ?? `Конфигурация.${moduleName}`;
 						const { dbType, bslType } = getModuleSuffixAndDbType(moduleName);
-						cacheModule(full, '', configObjectId, getPropertyId('', moduleName), moduleIdStr, dbType, bslType);
+						cacheModule(full, extensionName, configObjectId, getPropertyId('', moduleName), moduleIdStr, dbType, bslType);
 					}
 				}
 			}
@@ -213,7 +209,7 @@ function fillCache(rootProject: string): void {
 								dbType = s.dbType;
 								bslType = s.bslType;
 							}
-							cacheModule(full, '', objId, getPropertyId(mdType, moduleName), moduleIdStr, dbType, bslType);
+							cacheModule(full, extensionName, objId, getPropertyId(mdType, moduleName), moduleIdStr, dbType, bslType);
 						}
 					}
 				}
@@ -236,7 +232,7 @@ function fillCache(rootProject: string): void {
 					const formExtFormPath = path.join(formDir, 'Ext', 'Form');
 					const formModuleBsl = path.join(formExtFormPath, 'Module.bsl');
 					if (fs.existsSync(formModuleBsl) && fs.statSync(formModuleBsl).isFile()) {
-						cacheModule(formModuleBsl, '', formObjectId, getPropertyId(mdType, 'Module'), moduleIdStr, 'FormModule', 'ManagedFormModule');
+						cacheModule(formModuleBsl, extensionName, formObjectId, getPropertyId(mdType, 'Module'), moduleIdStr, 'FormModule', 'ManagedFormModule');
 					} else {
 						// Альтернатива: Forms/X/*.bsl (vanessa-bootstrap, Form.bsl)
 						const bslFiles = fs.readdirSync(formDir, { withFileTypes: true }).filter((f) => f.isFile() && f.name.toLowerCase().endsWith('.bsl'));
@@ -244,7 +240,7 @@ function fillCache(rootProject: string): void {
 						if (firstBsl) {
 							const full = path.join(formDir, firstBsl.name);
 							const moduleName = path.basename(firstBsl.name, '.bsl');
-							cacheModule(full, '', formObjectId, getPropertyId(mdType, moduleName), moduleIdStr, 'FormModule', 'ManagedFormModule');
+							cacheModule(full, extensionName, formObjectId, getPropertyId(mdType, moduleName), moduleIdStr, 'FormModule', 'ManagedFormModule');
 						}
 					}
 				}
@@ -263,18 +259,54 @@ function fillCache(rootProject: string): void {
 					const moduleIdStr = `${mdTypeRu}.${mdName}.Команда.${cmdName}.МодульКоманды`;
 					const cmdExtBsl = path.join(cmdDir, 'Ext', 'CommandModule.bsl');
 					if (fs.existsSync(cmdExtBsl) && fs.statSync(cmdExtBsl).isFile()) {
-						cacheModule(cmdExtBsl, '', cmdObjectId, getPropertyId('', 'CommandModule'), moduleIdStr, 'Module', 'ConfigModule');
+						cacheModule(cmdExtBsl, extensionName, cmdObjectId, getPropertyId('', 'CommandModule'), moduleIdStr, 'Module', 'ConfigModule');
 					} else {
 						const bslFiles = fs.readdirSync(cmdDir, { withFileTypes: true }).filter((f) => f.isFile() && f.name.toLowerCase().endsWith('.bsl'));
 						if (bslFiles[0]) {
 							const full = path.join(cmdDir, bslFiles[0].name);
 							const moduleName = path.basename(bslFiles[0].name, '.bsl');
-							cacheModule(full, '', cmdObjectId, getPropertyId('', moduleName), moduleIdStr, 'Module', 'ConfigModule');
+							cacheModule(full, extensionName, cmdObjectId, getPropertyId('', moduleName), moduleIdStr, 'Module', 'ConfigModule');
 						}
 					}
 				}
 			}
 		}
+	}
+}
+
+/**
+ * Заполняет кэш для workspace: основная конфигурация (root или src/cf) и расширения (src/cfe/*).
+ * workspaceRoot — корень проекта (workspace folder, например E:\DATA1C\BASE).
+ */
+function fillCache(workspaceRoot: string): void {
+	const root = normalizePath(workspaceRoot);
+	if (cacheByRoot.has(root)) return;
+
+	const cache = new Map<string, ModuleInfo>();
+
+	// Основная конфигурация: root/Configuration.xml | root/src/cf | root/cf (workspace = src)
+	const configInRoot = path.join(workspaceRoot, 'Configuration.xml');
+	const configInSrcCf = path.join(workspaceRoot, 'src', 'cf', 'Configuration.xml');
+	const configInCf = path.join(workspaceRoot, 'cf', 'Configuration.xml');
+	if (fs.existsSync(configInRoot)) {
+		scanOneConfig(cache, workspaceRoot, '');
+	} else if (fs.existsSync(configInSrcCf)) {
+		scanOneConfig(cache, path.join(workspaceRoot, 'src', 'cf'), '');
+	} else if (fs.existsSync(configInCf)) {
+		scanOneConfig(cache, path.join(workspaceRoot, 'cf'), '');
+	}
+
+	// Расширения: root/src/cfe/<name> | root/cfe/<name> (workspace = src)
+	for (const cfeBase of [path.join(workspaceRoot, 'src', 'cfe'), path.join(workspaceRoot, 'cfe')]) {
+		if (!fs.existsSync(cfeBase) || !fs.statSync(cfeBase).isDirectory()) continue;
+		for (const entry of fs.readdirSync(cfeBase, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const extPath = path.join(cfeBase, entry.name);
+			if (fs.existsSync(path.join(extPath, 'Configuration.xml'))) {
+				scanOneConfig(cache, extPath, entry.name);
+			}
+		}
+		break; // нашли первый cfe, остальные пропускаем
 	}
 
 	cacheByRoot.set(root, cache);
@@ -305,16 +337,31 @@ export function getModuleInfoByPath(rootProject: string, sourcePath: string): Mo
 
 /**
  * Обратный поиск: путь к файлу .bsl по objectID и propertyID (для маппинга стека вызовов).
+ * extensionName — имя расширения из RDBG (пустая строка для основной конфигурации).
  */
-export function getModulePathByObjectProperty(rootProject: string, objectId: string, propertyId: string): string {
-	if (!rootProject || !objectId || !propertyId) return '';
-	fillCache(rootProject);
-	const root = normalizePath(rootProject);
+export function getModulePathByObjectProperty(
+	workspaceRoot: string,
+	objectId: string,
+	propertyId: string,
+	extensionName?: string,
+): string {
+	if (!workspaceRoot || !objectId || !propertyId) return '';
+	fillCache(workspaceRoot);
+	const root = normalizePath(workspaceRoot);
 	const cache = cacheByRoot.get(root);
 	if (!cache) return '';
+	const ext = (extensionName ?? '').trim();
 	for (const info of cache.values()) {
-		if (info.objectId === objectId && info.propertyId === propertyId) {
+		if (info.objectId === objectId && info.propertyId === propertyId && info.extension === ext) {
 			return info.path;
+		}
+	}
+	// Fallback: без учёта extension (на случай несовпадения имён)
+	if (ext !== '') {
+		for (const info of cache.values()) {
+			if (info.objectId === objectId && info.propertyId === propertyId) {
+				return info.path;
+			}
 		}
 	}
 	return '';
@@ -324,14 +371,18 @@ export function getModulePathByObjectProperty(rootProject: string, objectId: str
  * Обратный поиск по moduleIdStr (fallback, когда objectId/propertyId из сервера не совпадают с проектом).
  * Сервер возвращает строки вида "Документ.ПриходнаяНакладная.МодульОбъекта" — сравниваем с кэшем.
  */
-export function getModulePathByModuleIdStr(rootProject: string, moduleIdStr: string): string {
-	if (!rootProject || !moduleIdStr || typeof moduleIdStr !== 'string') return '';
+export function getModulePathByModuleIdStr(workspaceRoot: string, moduleIdStr: string, extensionName?: string): string {
+	if (!workspaceRoot || !moduleIdStr || typeof moduleIdStr !== 'string') return '';
 	const normalized = moduleIdStr.trim();
 	if (!normalized) return '';
-	fillCache(rootProject);
-	const root = normalizePath(rootProject);
+	fillCache(workspaceRoot);
+	const root = normalizePath(workspaceRoot);
 	const cache = cacheByRoot.get(root);
 	if (!cache) return '';
+	const ext = (extensionName ?? '').trim();
+	for (const info of cache.values()) {
+		if (info.moduleIdString === normalized && info.extension === ext) return info.path;
+	}
 	for (const info of cache.values()) {
 		if (info.moduleIdString === normalized) return info.path;
 	}
