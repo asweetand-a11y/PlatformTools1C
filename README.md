@@ -150,7 +150,7 @@
 | varFetchDelayMs | 50 | Задержка между retry при пустом ответе evalLocalVariables/evalExpr |
 | calcWaitingTimeMs | 100 | calcWaitingTime в RDBG — ожидание результата вычислений |
 | pingIntervalMs | 50 | Интервал ping при выполнении (мс). 50 — стабильность целей |
-| pingStoppedIntervalMs | 300 | Интервал ping в режиме остановки (мс). Меньше нагрузка на dbgs — цели и стек не меняются |
+| pingStoppedIntervalMs | 500 | Интервал ping в режиме остановки (мс). Меньше нагрузка на dbgs — цели и стек не меняются (анализ D:\traf) |
 | stepInOutDelayMs | 40 | Задержка scheduleRefreshStackAndReveal для Step In/Out (мс) |
 | immediatePingDelaysMs | [25, 50, 100] | Интервалы немедленного ping после F11/Shift+F11 для вылова callStackFormed (мс) |
 | evalExprRetryDelaysMs | [50, 100] | Задержки retry evalExpr при пустом ответе (мс) |

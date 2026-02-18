@@ -148,6 +148,12 @@ export class OnecDebugSession extends DebugSession {
 	private lastCallStackFormedKey = '';
 	/** Дебаунс InvalidatedEvent(['variables']) при exprEvaluated — уменьшает частоту запросов переменных. */
 	private exprEvaluatedInvalidateTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Дебаунс InvalidatedEvent при обновлении Watch — один событие вместо лавины при множественных выражениях (нагрузка на dbgs). */
+	private watchInvalidateTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Ограничение конкурентных evalExpr (Watch): при большом числе выражений — распределение по времени, снижение нагрузки на dbgs. */
+	private evalExprWatchInFlight = 0;
+	/** Время последнего evalExpr по cacheKey — пропуск фонового обновления при недавнем кэше (разрыв цикла переменные→refresh→запросы). */
+	private readonly lastEvalExprByCacheKey = new Map<string, number>();
 	private autoAttachTypes: string[] = [];
 	/** Процесс 1cv8c, запущенный в режиме launch. Нужен для завершения при остановке отладки. */
 	private launchedProcess: ChildProcess | undefined;
@@ -337,12 +343,17 @@ export class OnecDebugSession extends DebugSession {
 			clearTimeout(this.exprEvaluatedInvalidateTimer);
 			this.exprEvaluatedInvalidateTimer = undefined;
 		}
+		if (this.watchInvalidateTimer) {
+			clearTimeout(this.watchInvalidateTimer);
+			this.watchInvalidateTimer = undefined;
+		}
 		this.threadsCallStack.clear();
 	}
 
 	/** Очистка кэша выражений (Watch, раскрываемые переменные). Вызывается при отключении. */
 	private clearEvalExprCache(): void {
 		this.evalExprCache.clear();
+		this.lastEvalExprByCacheKey.clear();
 	}
 
 	/** После остановки (F10/F11/Shift+F11) открыть файл модуля BSL на текущей строке. Задержка 100 ms — чтобы панель отладки успела обновиться. */
@@ -468,6 +479,15 @@ export class OnecDebugSession extends DebugSession {
 		this.immediatePingTimerIds.clear();
 	}
 
+	/** Дебаунс InvalidatedEvent при обновлении Watch — при множественных выражениях один событие вместо лавины запросов (нагрузка на dbgs). */
+	private scheduleWatchInvalidate(): void {
+		if (this.watchInvalidateTimer) clearTimeout(this.watchInvalidateTimer);
+		this.watchInvalidateTimer = setTimeout(() => {
+			this.watchInvalidateTimer = undefined;
+			this.sendEvent(new InvalidatedEvent(['variables']));
+		}, 200);
+	}
+
 	/** Обработка callStackFormed: сохраняем стек, отправляем StoppedEvent, reveal. */
 	private processCallStackFormed(csf: CallStackFormedResult): void {
 		const top = csf.callStack?.[0];
@@ -533,6 +553,11 @@ export class OnecDebugSession extends DebugSession {
 		target: DebugTargetId,
 	): Promise<void> {
 		if (!this.rdbgClient || !this.attached) return;
+		// Распределение по времени при большом числе Watch — снижает лавину evalExpr и нагрузку на dbgs (анализ D:\traf).
+		const stagger = Math.min(this.evalExprWatchInFlight * 50, 200);
+		this.evalExprWatchInFlight++;
+		try {
+			if (stagger > 0) await new Promise((r) => setTimeout(r, stagger));
 		const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
 		const targetLight = { id: target.id };
 		const exprStore = {
@@ -548,12 +573,17 @@ export class OnecDebugSession extends DebugSession {
 			if (!hasMeaningful) {
 				const cached = this.evalExprCache.get(cacheKey);
 				if (cached && ((cached.result ?? '').trim() !== '' || (cached.children?.length ?? 0) > 0)) {
-					this.sendEvent(new InvalidatedEvent(['variables']));
+					this.scheduleWatchInvalidate();
 					return;
 				}
 			}
 			const displayResult = result.error ?? result.result ?? result.typeName ?? 'Неопределено';
 			const hasChildren = !!(result.children && result.children.length > 0);
+			const cached = this.evalExprCache.get(cacheKey);
+			const resultChanged =
+				!cached ||
+				cached.result !== displayResult ||
+				(cached.children?.length ?? 0) !== (result.children?.length ?? 0);
 			let variablesReference = 0;
 			if (hasChildren) {
 				variablesReference = this.references.registerVariable(`eval:${expression}`, {
@@ -569,7 +599,8 @@ export class OnecDebugSession extends DebugSession {
 				children: result.children,
 				variablesRef: variablesReference,
 			});
-			this.sendEvent(new InvalidatedEvent(['variables']));
+			this.lastEvalExprByCacheKey.set(cacheKey, Date.now());
+			if (resultChanged) this.scheduleWatchInvalidate();
 		};
 		try {
 			await doEval();
@@ -587,7 +618,7 @@ export class OnecDebugSession extends DebugSession {
 								result: `Ошибка: ${errMsg}`,
 								variablesRef: 0,
 							});
-							this.sendEvent(new InvalidatedEvent(['variables']));
+							this.scheduleWatchInvalidate();
 							return;
 						}
 					}
@@ -598,7 +629,10 @@ export class OnecDebugSession extends DebugSession {
 				result: `Ошибка: ${errMsg}`,
 				variablesRef: 0,
 			});
-			this.sendEvent(new InvalidatedEvent(['variables']));
+			this.scheduleWatchInvalidate();
+		}
+		} finally {
+			this.evalExprWatchInFlight = Math.max(0, this.evalExprWatchInFlight - 1);
 		}
 	}
 
@@ -1782,7 +1816,10 @@ export class OnecDebugSession extends DebugSession {
 			};
 			this.sendResponse(response);
 			if (args.context === 'watch') {
-				void this.evalExprWatchAndInvalidate(cacheKey, args.expression, frameIndex, threadId, target);
+				const lastEval = this.lastEvalExprByCacheKey.get(cacheKey) ?? 0;
+				if (Date.now() - lastEval > 1500) {
+					void this.evalExprWatchAndInvalidate(cacheKey, args.expression, frameIndex, threadId, target);
+				}
 			}
 			return;
 		}

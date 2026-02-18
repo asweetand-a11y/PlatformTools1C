@@ -565,7 +565,7 @@
         },
         "1c-dev-tools.debug.timings.pingStoppedIntervalMs": {
           "type": "number",
-          "default": 300,
+          "default": 500,
           "minimum": 100,
           "maximum": 2000,
           "description": "Интервал ping в режиме остановки (breakpoint/step). Меньше нагрузка на dbgs — цели и стек не меняются."

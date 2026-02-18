@@ -30,7 +30,7 @@ const DEFAULTS: DebugTimingConfig = {
 	varFetchDelayMs: 50,
 	calcWaitingTimeMs: 100,
 	pingIntervalMs: 50,
-	pingStoppedIntervalMs: 300,
+	pingStoppedIntervalMs: 500,
 	stepInOutDelayMs: 40,
 	immediatePingDelaysMs: [25, 50, 100],
 	evalExprRetryDelaysMs: [50, 100],
