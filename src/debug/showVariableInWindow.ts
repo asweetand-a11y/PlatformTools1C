@@ -18,20 +18,30 @@ interface DebugVariableContainer {
 	variablesReference?: number;
 }
 
-/** Рекурсивно получает все дочерние переменные для отображения в таблице. */
+/** Макс. глубина — защита от иных рекурсивных структур. */
+const FETCH_VARIABLE_TREE_MAX_DEPTH = 12;
+
+/** Рекурсивно получает дочерние переменные. Цепочки .Ссылка.Ссылка, .Родитель.Родитель — не шлём повторный запрос. */
 async function fetchVariableTree(
 	session: vscode.DebugSession,
 	variablesReference: number,
 	prefix: string,
+	depth = 0,
 ): Promise<Array<{ name: string; value: string; type: string; path: string }>> {
 	const result = await session.customRequest('variables', { variablesReference });
 	const vars = (result as { variables?: DebugVariable[] }).variables ?? [];
 	const rows: Array<{ name: string; value: string; type: string; path: string }> = [];
+	const atMaxDepth = depth >= FETCH_VARIABLE_TREE_MAX_DEPTH;
 	for (const v of vars) {
 		const path = prefix ? `${prefix}.${v.name}` : v.name;
-		rows.push({ name: v.name, value: v.value, type: v.type ?? '', path });
-		if (v.variablesReference && v.variablesReference > 0) {
-			const nested = await fetchVariableTree(session, v.variablesReference, path);
+		const displayValue = atMaxDepth && v.variablesReference ? `${v.value} …` : v.value;
+		rows.push({ name: v.name, value: displayValue, type: v.type ?? '', path });
+		// Триггер рекурсии: последний сегмент пути совпадает с именем дочернего узла (...,X + X → повтор).
+		// Работает для любых имён (Ссылка, Родитель, Владелец и т.д.) без привязки к конкретным значениям.
+		const lastSegment = prefix.split('.').pop() ?? '';
+		const isStructuralRecursion = lastSegment !== '' && lastSegment === v.name;
+		if (v.variablesReference && v.variablesReference > 0 && !isStructuralRecursion && !atMaxDepth) {
+			const nested = await fetchVariableTree(session, v.variablesReference, path, depth + 1);
 			rows.push(...nested);
 		}
 	}
@@ -143,16 +153,18 @@ export async function showVariableInWindow(
 		const frames = (stack as { stackFrames?: Array<{ id: number }> }).stackFrames ?? [];
 		const frameId = frames[0]?.id ?? 0;
 
-		// Для коллекций — запрос 1c/evaluateCollection (строки/пары Ключ-Значение)
+		// Для коллекций — запрос 1c/evaluateCollection (строки/пары Ключ-Значение).
+		// ВременнаяТаблицаЗапроса — исключена (строки не вычисляем, зацикливание)
 		const isCollectionType = (t: string) =>
-			/ТаблицаЗначений|Массив|Структура|Соответствие|СписокЗначений|Коллекция/i.test(t ?? '');
+			/ТаблицаЗначений|Массив|Структура|Соответствие|СписокЗначений|Коллекция|МенеджерВременныхТаблиц|ВременныеТаблицыЗапроса/i.test(t ?? '');
 		let typeName = variable?.type ?? '';
 		let collectionData: { collectionRows?: Array<{ index: number; cells: Array<{ name: string; value: string; typeName?: string }> }> } | null = null;
 
-		// Если тип неизвестен (вызов из редактора) — сначала evaluate для определения типа
+		// Если тип неизвестен (вызов из редактора) — сначала evaluate для определения типа.
+		// context: 'repl' — синхронный eval, без evalExprWatchAndInvalidate и InvalidatedEvent
 		if (!typeName && !variable) {
 			try {
-				const prelim = await session.customRequest('evaluate', { expression, frameId, context: 'watch' });
+				const prelim = await session.customRequest('evaluate', { expression, frameId, context: 'repl' });
 				typeName = (prelim as { type?: string }).type ?? '';
 			} catch {
 				// игнорируем
@@ -160,9 +172,13 @@ export async function showVariableInWindow(
 		}
 		if (isCollectionType(typeName)) {
 			const useEnum = /Структура|Соответствие/i.test(typeName);
+			// МенеджерВременныхТаблиц: коллекция в свойстве .Таблицы
+			const collExpr = /МенеджерВременныхТаблиц/i.test(typeName) && !/\.Таблицы\b/.test(expression)
+				? `${expression}.Таблицы`
+				: expression;
 			try {
 				const collRes = await session.customRequest('1c/evaluateCollection', {
-					expression,
+					expression: collExpr,
 					frameId,
 					interfaceType: useEnum ? 'enum' : 'collection',
 				});
@@ -180,10 +196,11 @@ export async function showVariableInWindow(
 		if (collectionData?.collectionRows && collectionData.collectionRows.length > 0) {
 			rows = collectionRowsToTableRows(expression, collectionData.collectionRows);
 		} else {
+			// context: 'repl' — синхронный eval, иначе watch даёт «Неопределено» + фоновый eval + InvalidatedEvent → лишние запросы
 			const evalResult = await session.customRequest('evaluate', {
 				expression,
 				frameId,
-				context: 'watch',
+				context: 'repl',
 			});
 			const res = evalResult as { result?: string; variablesReference?: number; type?: string };
 			typeName = res.type ?? typeName;

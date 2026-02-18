@@ -203,6 +203,12 @@ export class OnecDebugSession extends DebugSession {
 				this.sendResponse(response);
 				return;
 			}
+			// МенеджерВременныхТаблиц.Таблицы.[N] — не вычислять строки внутри временной таблицы (зацикливание)
+			if (/\.Таблицы\.\[\d+\]/.test(expression)) {
+				response.body = { typeName: '', collectionRows: [], collectionSize: 0 };
+				this.sendResponse(response);
+				return;
+			}
 			const frameId = args.frameId ?? 0;
 			const threadId = frameId >= 10000 ? Math.floor(frameId / 10000) : 1;
 			const frameIndex = frameId >= 1000 ? Math.max(0, (frameId % 10000) - 1000) : 0;
@@ -670,12 +676,14 @@ export class OnecDebugSession extends DebugSession {
 					// оставляем result как есть
 				}
 			}
+			// МенеджерВременныхТаблиц: не вычислять элементы коллекций (Таблицы, строки) — приводит к зацикливанию
+			const isUnderManagerTempTables = /МенеджерВременныхТаблиц/i.test(expression);
 			// ТаблицаЗначений: interfaces=context даёт только Колонки/Индексы — fallback на interfaces=collection для строк
 			const isTable = /ТаблицаЗначений/i.test(result.typeName ?? '');
 			const onlyMetadata =
 				result.children?.length === 2 &&
 				result.children.every((c) => /^(Колонки|Индексы)$/i.test(c.name));
-			if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0) {
+			if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0 && !isUnderManagerTempTables) {
 				try {
 					const collResult = await this.rdbgClient!.evalExprCollection(base, targetLight, expression, frameIndex);
 					if (collResult.collectionRows && collResult.collectionRows.length > 0) {
@@ -687,6 +695,22 @@ export class OnecDebugSession extends DebugSession {
 					}
 				} catch {
 					// оставляем result.children
+				}
+			}
+			// ВременныеТаблицыЗапроса (Запрос.МенеджерВременныхТаблиц.Таблицы): показывать список таблиц [0],[1],[2]
+			const isTempTables = /ВременныеТаблицыЗапроса/i.test(result.typeName ?? '');
+			if (isTempTables && (result.collectionSize ?? 0) > 0 && (!result.children || result.children.length === 0)) {
+				try {
+					const collResult = await this.rdbgClient!.evalExprCollection(base, targetLight, expression, frameIndex);
+					if (collResult.collectionRows && collResult.collectionRows.length > 0) {
+						const rowChildren = collResult.collectionRows.map((row) => {
+							const summary = row.cells.map((c) => `${c.name}=${c.value}`).join(', ');
+							return { name: `[${row.index}]`, value: summary, typeName: 'ВременнаяТаблицаЗапроса' };
+						});
+						result = { ...result, children: rowChildren };
+					}
+				} catch {
+					// оставляем result
 				}
 			}
 			const hasMeaningful = (result.result ?? '').trim() !== '' || (result.children && result.children.length > 0);
@@ -1617,12 +1641,14 @@ export class OnecDebugSession extends DebugSession {
 									// оставляем result как есть
 								}
 							}
+							// МенеджерВременныхТаблиц: не вычислять элементы коллекций — зацикливание
+							const isUnderManagerTempTables = /МенеджерВременныхТаблиц/i.test(val.expression ?? '');
 							// ТаблицаЗначений: interfaces=context даёт только Колонки/Индексы — fallback на interfaces=collection для строк
 							const isTable = /ТаблицаЗначений/i.test(result.typeName ?? '');
 							const onlyMetadata =
 								result.children?.length === 2 &&
 								result.children.every((c) => /^(Колонки|Индексы)$/i.test(c.name));
-							if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0) {
+							if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0 && !isUnderManagerTempTables) {
 								try {
 									const collResult = await this.rdbgClient.evalExprCollection(
 										{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
@@ -1640,8 +1666,31 @@ export class OnecDebugSession extends DebugSession {
 								} catch {
 									// оставляем result.children (Колонки, Индексы)
 								}
-							} else if (result.children && result.children.length > 0) {
-								val.children = result.children;
+							}
+							// ВременныеТаблицыЗапроса: показывать список таблиц [0],[1],[2]
+							const isTempTables = /ВременныеТаблицыЗапроса/i.test(result.typeName ?? '');
+							if (isTempTables && (result.collectionSize ?? 0) > 0 && (!result.children || result.children.length === 0)) {
+								try {
+									const collResult = await this.rdbgClient.evalExprCollection(
+										{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
+										{ id: target.id },
+										val.expression,
+										frameIndex,
+									);
+									if (collResult.collectionRows && collResult.collectionRows.length > 0) {
+										val.children = collResult.collectionRows.map((row) => {
+											const summary = row.cells.map((c) => `${c.name}=${c.value}`).join(', ');
+											return { name: `[${row.index}]`, value: summary, typeName: 'ВременнаяТаблицаЗапроса' };
+										});
+									}
+								} catch {
+									// оставляем result
+								}
+							}
+							if (!val.children || val.children.length === 0) {
+								if (result.children && result.children.length > 0) {
+									val.children = result.children;
+								}
 							}
 							if (!val.children || val.children.length === 0) {
 								const cachedNested = this.evalExprCache.get(nestedCacheKey);
@@ -1662,7 +1711,7 @@ export class OnecDebugSession extends DebugSession {
 				const isExpandable = (typeName?: string) => {
 					const t = (typeName ?? '').trim();
 					if (!t) return false;
-					if (/^(Число|Строка|Булево|Дата|Неопределено|Null|УникальныйИдентификатор)$/i.test(t)) return false;
+					if (/^(Число|Строка|Булево|Дата|Неопределено|Null|УникальныйИдентификатор|ВременнаяТаблицаЗапроса)$/i.test(t)) return false;
 					return true;
 				};
 				const variables = childrenList.map((c) => {
