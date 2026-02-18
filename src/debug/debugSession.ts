@@ -677,14 +677,13 @@ export class OnecDebugSession extends DebugSession {
 					// оставляем result как есть
 				}
 			}
-			// МенеджерВременныхТаблиц: не вычислять элементы коллекций (Таблицы, строки) — приводит к зацикливанию
-			const isUnderManagerTempTables = /МенеджерВременныхТаблиц/i.test(expression);
 			// ТаблицаЗначений: interfaces=context даёт только Колонки/Индексы — fallback на interfaces=collection для строк
 			const isTable = /ТаблицаЗначений/i.test(result.typeName ?? '');
 			const onlyMetadata =
 				result.children?.length === 2 &&
 				result.children.every((c) => /^(Колонки|Индексы)$/i.test(c.name));
-			if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0 && !isUnderManagerTempTables) {
+			const atTempTableLevel = /\.Таблицы\[\d+\]\s*$/.test(expression);
+			if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0 && !atTempTableLevel) {
 				try {
 					const collResult = await this.rdbgClient!.evalExprCollection(base, targetLight, expression, frameIndex);
 					if (collResult.collectionRows && collResult.collectionRows.length > 0) {
@@ -2101,6 +2100,32 @@ export class OnecDebugSession extends DebugSession {
 					}
 				} catch {
 					// оставляем result как есть
+				}
+			}
+			// ТаблицаЗначений: interfaces=context даёт только Колонки/Индексы — fallback на interfaces=collection для строк
+			const isTable = /ТаблицаЗначений/i.test(result.typeName ?? '');
+			const onlyMetadata =
+				result.children?.length === 2 &&
+				result.children.every((c) => /^(Колонки|Индексы)$/i.test(c.name));
+			// Не блокировать, если результат — ТаблицаЗначений из .ПолучитьДанные().Выгрузить() (безопасно)
+			const atTempTableLevel = /\.Таблицы\[\d+\]\s*$/.test(args.expression);
+			if (isTable && onlyMetadata && (result.collectionSize ?? 0) > 0 && !atTempTableLevel) {
+				try {
+					const collResult = await this.rdbgClient.evalExprCollection(
+						{ infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId },
+						{ id: target.id },
+						args.expression,
+						frameIndex,
+					);
+					if (collResult.collectionRows && collResult.collectionRows.length > 0) {
+						const rowChildren: EvalExprResult['children'] = collResult.collectionRows.map((row) => {
+							const summary = row.cells.map((c) => `${c.name}=${c.value}`).join(', ');
+							return { name: `[${row.index}]`, value: summary, typeName: 'СтрокаТаблицыЗначений' };
+						});
+						result = { ...result, children: [...(result.children ?? []), ...rowChildren] };
+					}
+				} catch {
+					// оставляем result.children
 				}
 			}
 			const serverReturnedEmpty = !(result.result ?? '').trim() && (!result.children || result.children.length === 0);

@@ -466,6 +466,11 @@
       {
         "command": "1c-dev-tools.debug.showVariableInWindow",
         "title": "Показать значение в отдельном окне"
+      },
+      {
+        "command": "1c-dev-tools.debug.calculateExpression",
+        "title": "Выражение",
+        "category": "1C"
       }
     ],
     "menus": {
@@ -473,6 +478,17 @@
         {
           "command": "1c-dev-tools.debug.showVariableInWindow",
           "when": "debugType == 'onec'"
+        },
+        {
+          "command": "1c-dev-tools.debug.calculateExpression",
+          "when": "debugType == 'onec'"
+        }
+      ],
+      "debug/toolbar": [
+        {
+          "command": "1c-dev-tools.debug.calculateExpression",
+          "when": "debugType == 'onec'",
+          "group": "navigation"
         }
       ],
       "editor/context": [
@@ -491,6 +507,17 @@
           "command": "1c-dev-tools.settings",
           "when": "view == 1c-dev-tools-panel-view",
           "group": "navigation"
+        },
+        {
+          "command": "1c-dev-tools.debug.calculateExpression",
+          "when": "view == workbench.debug.variablesView && debugType == 'onec'",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "1c-dev-tools.debug.calculateExpression",
+          "when": "debugType == 'onec'"
         }
       ]
     },
@@ -623,7 +650,15 @@
           "description": "Вызов evalExprStartStop при шаге (F10/F11). Снижает память dbgs.exe, но на части платформ 1С может приводить к завершению отладки."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "1c-dev-tools.debug.calculateExpression",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "debugType == 'onec'"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

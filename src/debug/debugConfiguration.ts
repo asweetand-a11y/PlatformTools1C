@@ -81,7 +81,8 @@ export class OnecDebugConfigurationProvider implements vscode.DebugConfiguration
 		// Порт: если dbgs запущен расширением для этого хоста — используем выбранный при проверке диапазона
 		const dbgsLaunch = getLastDbgsLaunch();
 		const hostFromEnv = (env['--debug-server'] ?? config.debugServerHost ?? 'localhost').toLowerCase();
-		const portFromDbgs = dbgsLaunch?.debugServer?.toLowerCase() === hostFromEnv ? dbgsLaunch.port : undefined;
+		const portFromDbgs =
+			dbgsLaunch && dbgsLaunch.debugServer?.toLowerCase() === hostFromEnv ? dbgsLaunch.port : undefined;
 		config.debugServerPort =
 			portFromDbgs ?? parsePortFromRange(env['--debug-port-range']) ?? config.debugServerPort ?? 1560;
 		config.ibconnection = env['--ibconnection'] ?? config.ibconnection;
@@ -124,7 +125,8 @@ export class OnecDebugConfigurationProvider implements vscode.DebugConfiguration
 		const env = workspaceFolder ? loadEnvDefault(workspaceFolder) : undefined;
 		const dbgsLaunch = getLastDbgsLaunch();
 		const hostFromEnv = (env?.['--debug-server'] ?? 'localhost').toLowerCase();
-		const portFromDbgs = dbgsLaunch?.debugServer?.toLowerCase() === hostFromEnv ? dbgsLaunch.port : undefined;
+		const portFromDbgs =
+			dbgsLaunch && dbgsLaunch.debugServer?.toLowerCase() === hostFromEnv ? dbgsLaunch.port : undefined;
 		const port = portFromDbgs ?? (env?.['--debug-port-range'] ? parsePortFromRange(env['--debug-port-range']) : 1560);
 		const host = env?.['--debug-server'] ?? 'localhost';
 

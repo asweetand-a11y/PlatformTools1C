@@ -18,6 +18,7 @@ import { TestCommands } from './commands/testCommands';
 import { WorkspaceTasksCommands } from './commands/workspaceTasksCommands';
 import { registerDebugAdapter } from './debug/debugAdapter';
 import { showVariableInWindow } from './debug/showVariableInWindow';
+import { openCalculateExpressionPanel } from './debug/calculateExpression';
 
 type EnvDefaultSection = {
 	'--v8version'?: string;
@@ -365,6 +366,11 @@ export async function activate(context: vscode.ExtensionContext) {
 		(context: unknown) => showVariableInWindow(context as Parameters<typeof showVariableInWindow>[0]),
 	);
 
+	const calculateExpressionCommand = vscode.commands.registerCommand(
+		'1c-dev-tools.debug.calculateExpression',
+		() => openCalculateExpressionPanel(),
+	);
+
 	if (panelTreeView) {
 		context.subscriptions.push(panelTreeView);
 	}
@@ -419,7 +425,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		fileOpenCommand,
 		launchEditConfigurationsCommand,
 		configEnvEditCommand,
-		showVariableInWindowCommand
+		showVariableInWindowCommand,
+		calculateExpressionCommand
 	);
 
 }
