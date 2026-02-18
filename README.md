@@ -153,7 +153,10 @@
 | stepInOutDelayMs | 75 | Задержка для Step In/Out |
 | immediatePingDelaysMs | [50, 100, 200] | Интервалы ping после F11 |
 | evalExprRetryDelaysMs | [50, 100] | Задержки retry evalExpr |
-| pingDbgtgtIntervalMs | 1000 | Интервал pingDBGTGT |
+| variablesRequestRetryDelaysMs | [50, 100, 150] | Retry при пустом ответе evalLocalVariables — устраняет появление переменных «через раз» |
+| pingDbgtgtIntervalMs | 5000 | Интервал pingDBGTGT (по карте Конфигуратора ~7.5 с) |
+
+**Примечание**: Локальные переменные отображаются только для **верхнего кадра** (текущей процедуры) в Call Stack. Для просмотра переменных выберите верхнюю строку в дереве вызовов.
 
 ## Структура проекта
 

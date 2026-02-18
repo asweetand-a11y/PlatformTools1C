@@ -135,6 +135,8 @@ export class OnecDebugSession extends DebugSession {
 	private pingCount = 0;
 	/** Таймеры отложенного getCallStack после Step (F10/F11/Shift+F11). */
 	private readonly pendingStackRefreshTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
+	/** Дебаунс InvalidatedEvent(['variables']) при exprEvaluated — уменьшает частоту запросов переменных. */
+	private exprEvaluatedInvalidateTimer: ReturnType<typeof setTimeout> | undefined;
 	private autoAttachTypes: string[] = [];
 	/** Процесс 1cv8c, запущенный в режиме launch. Нужен для завершения при остановке отладки. */
 	private launchedProcess: ChildProcess | undefined;
@@ -233,6 +235,10 @@ export class OnecDebugSession extends DebugSession {
 			clearInterval(this.pingTimer);
 			this.pingTimer = undefined;
 		}
+		if (this.exprEvaluatedInvalidateTimer) {
+			clearTimeout(this.exprEvaluatedInvalidateTimer);
+			this.exprEvaluatedInvalidateTimer = undefined;
+		}
 		this.threadsCallStack.clear();
 	}
 
@@ -282,6 +288,7 @@ export class OnecDebugSession extends DebugSession {
 				selection: new vscode.Range(line0, 0, line0 + 1, 0),
 				preview: false,
 				viewColumn: vscode.ViewColumn.One,
+				preserveFocus: true, // Не переключать фокус с Call Stack — переменные появляются без повторного клика
 			});
 		}, 100);
 	}
@@ -307,7 +314,7 @@ export class OnecDebugSession extends DebugSession {
 					if (stackChanged) {
 						this.threadsCallStack.set(threadId, stack);
 						const stoppedEv = new StoppedEvent('step', threadId);
-						(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = false;
+						(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = true;
 						this.sendEvent(stoppedEv);
 						this.sendEvent(new InvalidatedEvent(['stack', 'variables']));
 						this.revealCurrentFrameInEditor(threadId);
@@ -350,6 +357,8 @@ export class OnecDebugSession extends DebugSession {
 		} else if (this.targets.length > 0) {
 			threadId = 1;
 		}
+		// Отменяем отложенный getCallStack — уже получили стек из ping, избегаем двойного StoppedEvent и повторных запросов переменных
+		this.cancelPendingStackRefresh(threadId);
 		if (csf.targetIDStr?.trim()) {
 			const target = this.targets[threadId - 1] ?? this.targets[0];
 			if (target) target.targetIDStr = csf.targetIDStr;
@@ -357,7 +366,7 @@ export class OnecDebugSession extends DebugSession {
 		const stackOrdered = csf.callStack;
 		this.threadsCallStack.set(threadId, stackOrdered);
 		const stoppedEv = new StoppedEvent(csf.reason, threadId);
-		(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = false;
+		(stoppedEv as { body: Record<string, unknown> }).body.preserveFocusHint = true;
 		this.sendEvent(stoppedEv);
 		this.sendEvent(new InvalidatedEvent(['stack', 'variables']));
 		this.revealCurrentFrameInEditor(threadId);
@@ -486,7 +495,12 @@ export class OnecDebugSession extends DebugSession {
 				}
 			}
 			if (hadNewExprEvaluated) {
-				this.sendEvent(new InvalidatedEvent(['variables']));
+				// Дебаунс 150 мс — при серии exprEvaluated один InvalidatedEvent вместо потока запросов переменных
+				if (this.exprEvaluatedInvalidateTimer) clearTimeout(this.exprEvaluatedInvalidateTimer);
+				this.exprEvaluatedInvalidateTimer = setTimeout(() => {
+					this.exprEvaluatedInvalidateTimer = undefined;
+					this.sendEvent(new InvalidatedEvent(['variables']));
+				}, 150);
 			}
 
 			// Событие targetStarted — новая цель отладки (как в onec-debug-adapter DebugTargetsManager)
@@ -1233,8 +1247,12 @@ export class OnecDebugSession extends DebugSession {
 				// Один запрос evalLocalVariables (контекст) — быстрее batch, batch в фоне для раскрытия
 				result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
 				if (result.variables.length === 0) {
-					await new Promise((r) => setTimeout(r, this.timingConfig.varFetchDelayMs));
-					result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
+					const delays = this.timingConfig.variablesRequestRetryDelaysMs ?? [50, 100, 150];
+					for (const d of delays) {
+						await new Promise((r) => setTimeout(r, d));
+						result = await this.rdbgClient.evalLocalVariables(base, targetReq, frameIndex, exprStore);
+						if (result.variables.length > 0) break;
+					}
 				}
 			} catch (err) {
 				// 400 «только в остановленном предмете» — после F10/F11 сервер может быть ещё не готов, повторяем с паузой

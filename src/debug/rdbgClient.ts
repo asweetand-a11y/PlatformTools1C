@@ -1436,10 +1436,12 @@ function parseEvalExprResultFromResultObject(res: Record<string, unknown>): Eval
 		const prop = p as Record<string, unknown>;
 		const propInfo = (prop.propInfo ?? prop.PropInfo) as Record<string, unknown> | undefined;
 		const valInfo = (prop.valueInfo ?? prop.ValueInfo) as Record<string, unknown> | undefined;
-		const name = propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '';
-		const childTypeName = valInfo
+		const name = (propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '')
+			|| String(prop.propName ?? prop.PropName ?? '').trim();
+		const childTypeName = (valInfo
 			? String(valInfo.typeName ?? valInfo.TypeName ?? '').trim()
-			: String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim();
+			: String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim())
+			|| String(prop.typeName ?? prop.TypeName ?? '').trim();
 		let value = '';
 		if (valInfo) {
 			const vd = valInfo.valueDecimal ?? valInfo.ValueDecimal;
@@ -1458,6 +1460,10 @@ function parseEvalExprResultFromResultObject(res: Record<string, unknown>): Eval
 			else if (typeCode !== undefined && typeCode !== null) value = String(typeCode);
 		}
 		if (!value && childTypeName) value = childTypeName;
+		if (!value) {
+			const propPres = prop.pres ?? prop.Pres;
+			if (typeof propPres === 'string' && propPres.length > 0) value = decodeBase64ToUtf8(propPres) || propPres;
+		}
 		if (!value && name) value = 'Неопределено';
 		return { name, value: value || '', typeName: childTypeName || undefined };
 	});
@@ -1465,7 +1471,7 @@ function parseEvalExprResultFromResultObject(res: Record<string, unknown>): Eval
 		? (typeName + (typeof collectionSize === 'number' ? ` (${collectionSize})` : '') + (children.length > 0 && !typeName ? ` { ${children.length} }` : '')).trim() || typeName
 		: (simpleValue || typeName);
 	return {
-		result: summary || typeName || 'OK',
+		result: summary || typeName || 'Object',
 		typeName: typeName || undefined,
 		isExpandable: isExpandable || children.length > 0,
 		collectionSize: typeof collectionSize === 'number' ? collectionSize : undefined,
@@ -1578,10 +1584,12 @@ function parseEvalLocalVariablesResult(xml: string): EvalLocalVariablesResult {
 					const prop = p as Record<string, unknown>;
 					const propInfo = (prop.propInfo ?? prop.PropInfo) as Record<string, unknown> | undefined;
 					const valInfo = (prop.valueInfo ?? prop.ValueInfo) as Record<string, unknown> | undefined;
-					const name = propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '';
-					const typeName = valInfo
+					const name = (propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '')
+						|| String(prop.propName ?? prop.PropName ?? '').trim();
+					const typeName = (valInfo
 						? String(valInfo.typeName ?? valInfo.TypeName ?? '').trim()
-						: String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim();
+						: String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim())
+						|| String(prop.typeName ?? prop.TypeName ?? '').trim();
 					let value = '';
 					if (valInfo) {
 						const vd = valInfo.valueDecimal ?? valInfo.ValueDecimal;
@@ -1598,6 +1606,10 @@ function parseEvalLocalVariablesResult(xml: string): EvalLocalVariablesResult {
 						else if (typeName) value = typeName;
 					}
 					if (!value && typeName) value = typeName;
+					if (!value) {
+						const propPres = prop.pres ?? prop.Pres;
+						if (typeof propPres === 'string' && propPres.length > 0) value = decodeBase64ToUtf8(propPres) || propPres;
+					}
 					if (!value && name) value = 'Неопределено';
 					return { name, value: value || '', typeName: typeName || undefined };
 				});
@@ -1651,8 +1663,10 @@ function parseEvalLocalVariablesMultiResponse(
 						const prop = p as Record<string, unknown>;
 						const propInfo = (prop.propInfo ?? prop.PropInfo) as Record<string, unknown> | undefined;
 						const valInfo = (prop.valueInfo ?? prop.ValueInfo) as Record<string, unknown> | undefined;
-						const name = propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '';
-						const typeName = valInfo ? String(valInfo.typeName ?? valInfo.TypeName ?? '').trim() : String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim();
+						const name = (propInfo ? String(propInfo.propName ?? propInfo.PropName ?? '').trim() : '')
+							|| String(prop.propName ?? prop.PropName ?? '').trim();
+						const typeName = (valInfo ? String(valInfo.typeName ?? valInfo.TypeName ?? '').trim() : String(propInfo?.typeName ?? propInfo?.TypeName ?? '').trim())
+							|| String(prop.typeName ?? prop.TypeName ?? '').trim();
 						let value = '';
 						if (valInfo) {
 							const vd = valInfo.valueDecimal ?? valInfo.ValueDecimal;
@@ -1668,6 +1682,10 @@ function parseEvalLocalVariablesMultiResponse(
 							else if (typeName) value = typeName;
 						}
 						if (!value && typeName) value = typeName;
+						if (!value) {
+							const propPres = prop.pres ?? prop.Pres;
+							if (typeof propPres === 'string' && propPres.length > 0) value = decodeBase64ToUtf8(propPres) || propPres;
+						}
 						if (!value && name) value = 'Неопределено';
 						return { name, value: value || '', typeName: typeName || undefined };
 					}));

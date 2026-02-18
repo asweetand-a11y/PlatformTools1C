@@ -10,7 +10,7 @@ AGENTS.md
 .vscode/
 .cursorignore
 .vscodeignore
-src/
+#src/  # исходники должны отслеживаться
 docs/
 scripts/
 

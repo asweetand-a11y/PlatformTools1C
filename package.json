@@ -582,12 +582,18 @@
           "default": [50, 100],
           "description": "Задержки retry evalExpr при пустом ответе (мс)."
         },
+        "1c-dev-tools.debug.timings.variablesRequestRetryDelaysMs": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [50, 100, 150],
+          "description": "Задержки retry variablesRequest (evalLocalVariables) при пустом ответе (мс). Устраняет появление переменных «через раз»."
+        },
         "1c-dev-tools.debug.timings.pingDbgtgtIntervalMs": {
           "type": "number",
-          "default": 1000,
+          "default": 5000,
           "minimum": 200,
           "maximum": 60000,
-          "description": "Минимальный интервал между pingDBGTGT по одной цели (мс). По умолчанию 1 с."
+          "description": "Интервал pingDBGTGT по одной цели (мс). По карте Конфигуратора ~7.5 с. 5 с — по умолчанию."
         }
       }
     }
