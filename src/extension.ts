@@ -370,6 +370,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		'1c-dev-tools.debug.calculateExpression',
 		() => openCalculateExpressionPanel(),
 	);
+	const calculateExpressionFromEditorCommand = vscode.commands.registerCommand(
+		'1c-dev-tools.debug.calculateExpressionFromEditor',
+		() => openCalculateExpressionPanel(),
+	);
 
 	if (panelTreeView) {
 		context.subscriptions.push(panelTreeView);
@@ -426,7 +430,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		launchEditConfigurationsCommand,
 		configEnvEditCommand,
 		showVariableInWindowCommand,
-		calculateExpressionCommand
+		calculateExpressionCommand,
+		calculateExpressionFromEditorCommand
 	);
 
 }

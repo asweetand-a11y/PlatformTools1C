@@ -469,7 +469,12 @@
       },
       {
         "command": "1c-dev-tools.debug.calculateExpression",
-        "title": "Выражение",
+        "title": "Рассчитать значение",
+        "category": "1C"
+      },
+      {
+        "command": "1c-dev-tools.debug.calculateExpressionFromEditor",
+        "title": "Рассчитать произвольное значение",
         "category": "1C"
       }
     ],
@@ -478,7 +483,9 @@
         {
           "command": "1c-dev-tools.debug.showVariableInWindow",
           "when": "debugType == 'onec'"
-        },
+        }
+      ],
+      "debug/watch/context": [
         {
           "command": "1c-dev-tools.debug.calculateExpression",
           "when": "debugType == 'onec'"
@@ -495,6 +502,10 @@
         {
           "command": "1c-dev-tools.debug.showVariableInWindow",
           "when": "debugType == 'onec' && editorTextFocus"
+        },
+        {
+          "command": "1c-dev-tools.debug.calculateExpressionFromEditor",
+          "when": "debugType == 'onec' && editorTextFocus && editorLangId == 'bsl'"
         }
       ],
       "view/title": [
@@ -510,7 +521,7 @@
         },
         {
           "command": "1c-dev-tools.debug.calculateExpression",
-          "when": "view == workbench.debug.variablesView && debugType == 'onec'",
+          "when": "view == workbench.debug.watchExpressionsView && debugType == 'onec'",
           "group": "navigation"
         }
       ],
@@ -518,6 +529,10 @@
         {
           "command": "1c-dev-tools.debug.calculateExpression",
           "when": "debugType == 'onec'"
+        },
+        {
+          "command": "1c-dev-tools.debug.calculateExpressionFromEditor",
+          "when": "false"
         }
       ]
     },

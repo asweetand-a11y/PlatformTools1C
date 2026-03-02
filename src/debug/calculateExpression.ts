@@ -213,25 +213,28 @@ function buildResultHtml(rows: Array<{ name: string; value: string; type: string
 function getPanelHtml(expression: string, resultHtml: string | null, error?: string): string {
 	const resultOrError = error
 		? `<div class="error">${escapeHtml(error)}</div>`
-		: resultHtml ?? '<div class="hint">Введите выражение и нажмите «Рассчитать»</div>';
+		: resultHtml ?? '';
 	return `<!DOCTYPE html>
 <html>
 <head>
 	<meta charset="UTF-8">
 	<style>
-		body { font-family: var(--vscode-font-family); font-size: 13px; padding: 16px; color: var(--vscode-foreground); }
-		.input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
-		label { font-weight: 500; white-space: nowrap; }
-		input { flex: 1; padding: 6px 10px; font-family: inherit; }
-		button { padding: 6px 16px; cursor: pointer; }
+		body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); padding: 12px; color: var(--vscode-foreground); background-color: var(--vscode-editor-background); }
+		.input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+		label { font-weight: 500; white-space: nowrap; color: var(--vscode-foreground); }
+		input { flex: 1; padding: 6px 10px; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-input-foreground); background-color: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
+		button { padding: 6px 16px; cursor: pointer; font-family: inherit; font-size: inherit; color: var(--vscode-button-foreground); background-color: var(--vscode-button-background); border: none; }
+		button:hover { background-color: var(--vscode-button-hoverBackground); }
+		button:disabled { opacity: 0.6; cursor: not-allowed; }
 		table { border-collapse: collapse; width: 100%; margin-top: 8px; }
 		th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 10px; text-align: left; }
 		th { background: var(--vscode-editor-inactiveSelectionBackground); }
 		tr:nth-child(even) { background: var(--vscode-editor-inactiveSelectionBackground); opacity: 0.5; }
-		.result-section { margin-top: 16px; }
+		.result-section { margin-top: 12px; }
 		.count { color: var(--vscode-descriptionForeground); font-size: 12px; margin-bottom: 8px; }
 		.error { color: var(--vscode-errorForeground); margin-top: 12px; }
 		.hint { color: var(--vscode-descriptionForeground); margin-top: 12px; }
+		h2 { margin-top: 0; margin-bottom: 12px; font-size: var(--vscode-font-size); font-weight: 600; color: var(--vscode-foreground); }
 		.tree-view .tree-container { font-family: var(--vscode-editor-font-family); }
 		.tree-view .tree-node { display: block; }
 		.tree-view .tree-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; line-height: 1.4; }
@@ -245,10 +248,10 @@ function getPanelHtml(expression: string, resultHtml: string | null, error?: str
 	</style>
 </head>
 <body>
-	<h2>Выражение</h2>
+	<h2>Рассчитать значение</h2>
 	<div class="input-row">
 		<label for="expr">Выражение:</label>
-		<input type="text" id="expr" value="${escapeHtml(expression)}" placeholder="Запрос.МенеджерВременныхТаблиц.Таблицы[0]" />
+		<input type="text" id="expr" value="${escapeHtml(expression)}" />
 		<button id="calc">Рассчитать</button>
 	</div>
 	<div class="result-area">${resultOrError}</div>
@@ -306,7 +309,7 @@ export function openCalculateExpressionPanel(): void {
 
 	const panel = vscode.window.createWebviewPanel(
 		'1cCalculateExpression',
-		'Выражение',
+		'Рассчитать значение',
 		column,
 		{ enableScripts: true },
 	);
