@@ -2,7 +2,7 @@
   "name": "1c-dev-tools",
   "displayName": "1C Dev Tools",
   "description": "Расширение для Cursor с инструментами разработки для экосистемы 1С. Предоставляет удобный интерфейс для работы с проектами 1С, включая разбор обработок, отчетов и конфигураций.",
-  "version": "2.10.1",
+  "version": "2.10.2",
   "publisher": "whiterabbit",
   "repository": {
     "type": "git",
