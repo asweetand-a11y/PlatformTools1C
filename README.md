@@ -127,7 +127,7 @@
 	"configurations": [
 		{
 			"type": "onec",
-			"request": "attach",
+			"request": "launch",
 			"name": "1C: Запуск с фоновыми заданиями",
 			"debugServerHost": "localhost",
 			"debugServerPort": 1560,
@@ -139,7 +139,7 @@
 				"JobFileMode"
 			]
 		},
-	{
+		{
 		"type": "onec",
 		"request": "launch",
 		"name": "1C: Запуск без фоновых заданий",
@@ -149,8 +149,20 @@
 		"autoAttachTypes": [
 			"Client",
 			"Server"
-		]
-	}
+			]
+		},
+		{
+			"type": "onec",
+			"request": "attach",
+			"name": "1C: Присоединиться",
+			"debugServerHost": "localhost",
+			"debugServerPort": 1560,
+			"infoBaseAlias": "DefAlias",
+			"autoAttachTypes": [
+				"Client",
+				"Server"
+			]
+		}
 	]
 }
 ```
