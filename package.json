@@ -511,6 +511,11 @@
         "command": "1c-dev-tools.debug.calculateExpressionFromEditor",
         "title": "Рассчитать произвольное значение",
         "category": "1C"
+      },
+      {
+        "command": "1c-dev-tools.debug.showDebugTargetsPicker",
+        "title": "Предметы отладки (доступные и подключённые)",
+        "category": "1C"
       }
     ],
     "menus": {

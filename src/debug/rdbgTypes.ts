@@ -19,9 +19,22 @@ export enum AttachDebugUiResult {
 	FullCredentialsRequired = 'fullCredentialsRequired',
 }
 
+export type AttachResultMessageOptions = {
+	/** true — конфигурация request=attach (подсказки про конфигуратор и dbgs). */
+	attachMode?: boolean;
+};
+
 /** Человекочитаемое сообщение по коду результата attachDebugUI. */
-export function getAttachResultMessage(result: string): string {
+export function getAttachResultMessage(result: string, opts?: AttachResultMessageOptions): string {
 	const normalized = String(result).trim().toLowerCase();
+	if (opts?.attachMode && (normalized === 'ibindebug' || normalized === 'iblndebug')) {
+		return (
+			'К этой информационной базе уже подключён другой отладчик (часто — открыты «Предметы отладки» в конфигураторе 1С или незавершённый attach в другой IDE). ' +
+			'На одном dbgs платформа допускает только один UI отладки на ИБ. ' +
+			'Закройте отладку там (не обязательно останавливать dbgs.exe), затем снова запустите attach в Cursor. ' +
+			'Если других отладчиков нет — перезапустите dbgs (зависшее состояние после прошлого сеанса).'
+		);
+	}
 	const messages: Record<string, string> = {
 		unknown: 'Неизвестная ошибка при подключении к серверу отладки.',
 		registered: 'Подключение выполнено.',

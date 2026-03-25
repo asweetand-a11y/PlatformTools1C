@@ -196,6 +196,8 @@ export class OnecDebugSession extends DebugSession {
 	/** Время последнего evalExpr по cacheKey — пропуск фонового обновления при недавнем кэше (разрыв цикла переменные→refresh→запросы). */
 	private readonly lastEvalExprByCacheKey = new Map<string, number>();
 	private autoAttachTypes: string[] = [];
+	/** true — режим launch (автоподключение целей); false — attach (цели только через панель выбора). */
+	private isLaunchMode = false;
 	/** Процесс 1cv8c, запущенный в режиме launch. Нужен для завершения при остановке отладки. */
 	private launchedProcess: ChildProcess | undefined;
 	/** Настройки таймингов (1c-dev-tools.debug.timings). Загружаются при launch/attach. */
@@ -213,6 +215,17 @@ export class OnecDebugSession extends DebugSession {
 	protected override dispatchRequest(request: DebugProtocol.Request): void {
 		if (request.command === '1c/evaluateCollection') {
 			void this.handleEvaluateCollectionRequest(request);
+			return;
+		}
+		if (
+			request.command === 'onec.getDebugTargets' ||
+			request.command === 'onec.connectTargets' ||
+			request.command === 'onec.disconnectTarget' ||
+			request.command === 'onec.suspendTarget' ||
+			request.command === 'onec.terminateTarget' ||
+			request.command === 'onec.checkTargetCanTerminate'
+		) {
+			void this.handleOnecDebugTargetsRequest(request);
 			return;
 		}
 		super.dispatchRequest(request);
@@ -293,6 +306,200 @@ export class OnecDebugSession extends DebugSession {
 		this.sendResponse(response);
 	}
 
+	/** Кастомные запросы панели «Предметы отладки» (attach). */
+	private async handleOnecDebugTargetsRequest(request: DebugProtocol.Request): Promise<void> {
+		const req = request as unknown as { seq?: number };
+		const requestSeq = req.seq ?? 0;
+		const response: DebugProtocol.Response = {
+			type: 'response',
+			seq: requestSeq + 1,
+			request_seq: requestSeq,
+			success: true,
+			command: request.command,
+		};
+		const sendErr = (msg: string): void => {
+			response.success = false;
+			response.message = msg;
+			this.sendResponse(response);
+		};
+		try {
+			if (!this.rdbgClient || !this.attached) {
+				sendErr('Нет активной сессии отладки');
+				return;
+			}
+			const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
+			const args = (request.arguments ?? {}) as Record<string, unknown>;
+
+			const serializeRow = (t: DebugTargetId) => ({
+				id: t.id,
+				userName: t.userName ?? '',
+				targetType: t.targetType ?? '',
+				typeDisplay: getTargetTypeDisplayName(t.targetType ?? ''),
+				seanceId: t.seanceId ?? '',
+				seanceNo: t.seanceNo ?? null,
+			});
+
+			const filterByAutoAttach = (list: DebugTargetId[]): DebugTargetId[] => {
+				if (this.autoAttachTypes.length === 0) return list;
+				return list.filter((t) => {
+					const tt = t.targetType ?? '';
+					if (!tt.trim()) return true;
+					return matchesAutoAttachType(tt, this.autoAttachTypes);
+				});
+			};
+
+			if (request.command === 'onec.getDebugTargets') {
+				const list = await this.fetchDbgTargetsFromServer();
+				const filtered = filterByAutoAttach(list);
+				const connectedIds = new Set(this.targets.map((t) => t.id));
+				const available = filtered.filter((t) => t.id && !connectedIds.has(t.id));
+				response.body = {
+					available: available.map(serializeRow),
+					connected: this.targets.map(serializeRow),
+				};
+				this.sendResponse(response);
+				return;
+			}
+
+			const findTarget = (id: string): DebugTargetId | undefined =>
+				this.targets.find((t) => t.id === id) ??
+				undefined;
+
+			if (request.command === 'onec.connectTargets') {
+				const ids = Array.isArray(args.ids) ? (args.ids as unknown[]).map((x) => String(x).trim()).filter(Boolean) : [];
+				if (ids.length === 0) {
+					sendErr('Не выбраны цели для подключения');
+					return;
+				}
+				const fromServer = await this.fetchDbgTargetsFromServer();
+				const filtered = filterByAutoAttach(fromServer);
+				const prevIds = new Set(this.targets.map((t) => t.id));
+				const reallyNew: DebugTargetId[] = [];
+				for (const id of ids) {
+					const t = filtered.find((x) => x.id === id);
+					if (t && !prevIds.has(t.id)) reallyNew.push(t);
+				}
+				if (reallyNew.length === 0) {
+					response.body = { connected: this.targets.map(serializeRow) };
+					this.sendResponse(response);
+					return;
+				}
+				this.targets = this.deduplicateTargetsById([...this.targets, ...reallyNew]);
+				await this.attachToTargets(reallyNew);
+				for (const t of reallyNew) {
+					const threadId = this.getThreadIdByTargetId(t.id);
+					this.sendEvent(new ThreadEvent('started', threadId));
+					this.sendEvent(
+						new OutputEvent(
+							`[DEBUG] Подключена цель: ${getTargetTypeDisplayName(t.targetType ?? '') || 'Unknown'} (${t.userName ?? ''})\n`,
+							'console',
+						),
+					);
+				}
+				this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
+				response.body = { connected: this.targets.map(serializeRow) };
+				this.sendResponse(response);
+				return;
+			}
+
+			if (request.command === 'onec.disconnectTarget') {
+				const id = typeof args.id === 'string' ? args.id.trim() : '';
+				if (!id) {
+					sendErr('Не указан id цели');
+					return;
+				}
+				const idx = this.targets.findIndex((t) => t.id === id);
+				if (idx < 0) {
+					sendErr('Цель не найдена среди подключённых');
+					return;
+				}
+				const threadId = idx + 1;
+				const target = this.targets[idx]!;
+				try {
+					await this.rdbgClient.attachDetachDbgTargets(base, { attach: [], detach: [id] });
+				} catch {
+					// продолжаем очистку локального состояния
+				}
+				const targetIDStr = this.getTargetIDStr(target);
+				if (targetIDStr) {
+					try {
+						await this.rdbgClient.registerRemoteDebuggerRunTime(base, targetIDStr, false);
+					} catch {
+						// игнорируем
+					}
+				}
+				this.targets.splice(idx, 1);
+				this.rteProcVersionByTargetId.delete(id);
+				this.lastPingDbgtgtByTargetId.delete(id);
+				this.threadsCallStack.clear();
+				this.cancelPendingStackRefresh(threadId);
+				this.sendEvent(new ThreadEvent('exited', threadId));
+				this.sendEvent(
+					new OutputEvent(
+						`[DEBUG] Отключена цель: ${getTargetTypeDisplayName(target.targetType ?? '') || 'Unknown'}\n`,
+						'console',
+					),
+				);
+				this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
+				if (this.targets.length === 0) {
+					this.sendEvent(new OutputEvent('[DEBUG] Нет подключённых целей отладки.\n', 'console'));
+				}
+				response.body = { ok: true };
+				this.sendResponse(response);
+				return;
+			}
+
+			if (request.command === 'onec.suspendTarget') {
+				const id = typeof args.id === 'string' ? args.id.trim() : '';
+				const target = findTarget(id);
+				if (!target) {
+					sendErr('Цель не найдена среди подключённых');
+					return;
+				}
+				const rte = this.rteProcVersionByTargetId.get(target.id);
+				await this.rdbgClient.suspendRuntimeDebugTarget(base, target.id, target.seanceId ?? '', rte);
+				response.body = { ok: true };
+				this.sendResponse(response);
+				return;
+			}
+
+			if (request.command === 'onec.checkTargetCanTerminate') {
+				const id = typeof args.id === 'string' ? args.id.trim() : '';
+				const target = findTarget(id);
+				if (!target) {
+					sendErr('Цель не найдена среди подключённых');
+					return;
+				}
+				const rte = this.rteProcVersionByTargetId.get(target.id);
+				const can = await this.rdbgClient.checkTargetCanTerminate(base, target.id, target.seanceId ?? '', rte);
+				response.body = { canTerminate: can };
+				this.sendResponse(response);
+				return;
+			}
+
+			if (request.command === 'onec.terminateTarget') {
+				const id = typeof args.id === 'string' ? args.id.trim() : '';
+				const target = findTarget(id);
+				if (!target) {
+					sendErr('Цель не найдена среди подключённых');
+					return;
+				}
+				const rte = this.rteProcVersionByTargetId.get(target.id);
+				await this.rdbgClient.terminateRuntimeDebugTarget(base, target.id, target.seanceId ?? '', rte);
+				response.body = { ok: true };
+				this.sendResponse(response);
+				return;
+			}
+
+			sendErr('Неизвестная команда');
+			return;
+		} catch (err) {
+			response.success = false;
+			response.message = err instanceof Error ? err.message : String(err);
+			this.sendResponse(response);
+		}
+	}
+
 	private static normalizePath(p: string): string {
 		return path.resolve(p).replace(/\\/g, '/');
 	}
@@ -315,6 +522,34 @@ export class OnecDebugSession extends DebugSession {
 			seen.add(id);
 			return true;
 		});
+	}
+
+	/**
+	 * Список целей с RDBG для панели attach: сначала ping dbgui — иначе getDbgTargets часто возвращает пустой ответ (см. логи).
+	 * При пустом первом ответе — короткая пауза и повторный getDbgTargets.
+	 */
+	private async fetchDbgTargetsFromServer(): Promise<DebugTargetId[]> {
+		if (!this.rdbgClient) return [];
+		const base = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
+		try {
+			await this.rdbgClient.pingDebugUIParams(base);
+		} catch {
+			// игнорируем ошибку ping
+		}
+		await new Promise((r) => setTimeout(r, 150));
+		const toList = (res: { id?: DebugTargetId | DebugTargetId[] }): DebugTargetId[] => {
+			const idList = res.id;
+			const rawList = Array.isArray(idList) ? idList : idList ? [idList] : [];
+			return this.deduplicateTargetsById(rawList);
+		};
+		let res = await this.rdbgClient.getDbgTargets(base);
+		let list = toList(res);
+		if (list.length === 0) {
+			await new Promise((r) => setTimeout(r, 300));
+			res = await this.rdbgClient.getDbgTargets(base);
+			list = toList(res);
+		}
+		return list;
 	}
 
 	/** targetIDStr для RemoteDebuggerRunTime: только из ответа сервера (getDbgTargets/step), не формировать из id. */
@@ -822,8 +1057,12 @@ export class OnecDebugSession extends DebugSession {
 		if (!this.rdbgClient || !this.attached) return;
 		this.pingCount++;
 		try {
-			// Периодически опрашиваем getDbgTargets если целей нет (fallback, каждые 2 пинга = ~800 ms)
-			if (this.targets.length === 0 && this.pingCount % 2 === 0) {
+			// Только launch: автоподключение новых целей из getDbgTargets. В attach цели добавляет только панель.
+			if (
+				this.isLaunchMode &&
+				this.targets.length === 0 &&
+				this.pingCount % 2 === 0
+			) {
 				try {
 					const targetsRes = await this.rdbgClient.getDbgTargets({
 						infoBaseAlias: this.rdbgInfoBaseAlias,
@@ -852,18 +1091,18 @@ export class OnecDebugSession extends DebugSession {
 							for (const t of newTargets) {
 								const threadId = this.getThreadIdByTargetId(t.id);
 								this.sendEvent(new ThreadEvent('started', threadId));
-							this.sendEvent(new OutputEvent(
-								`[DEBUG] Цель отладки (getDbgTargets): ${getTargetTypeDisplayName(t.targetType ?? '') || 'Unknown'} (${t.userName ?? ''})\n`,
-								'console',
-							));
+								this.sendEvent(new OutputEvent(
+									`[DEBUG] Цель отладки (getDbgTargets): ${getTargetTypeDisplayName(t.targetType ?? '') || 'Unknown'} (${t.userName ?? ''})\n`,
+									'console',
+								));
+							}
+							this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
 						}
-						this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
 					}
+				} catch {
+					// игнорируем ошибки getDbgTargets
 				}
-			} catch {
-				// игнорируем ошибки getDbgTargets
 			}
-		}
 
 			const result = await this.rdbgClient.pingDebugUIParams({
 				infoBaseAlias: this.rdbgInfoBaseAlias,
@@ -910,8 +1149,8 @@ export class OnecDebugSession extends DebugSession {
 				}, 150);
 			}
 
-			// Событие targetStarted — новая цель отладки (как в onec-debug-adapter DebugTargetsManager)
-			if (result.targetStarted) {
+			// Событие targetStarted — только launch: автоподключение. В attach — пользователь подключает цели вручную.
+			if (this.isLaunchMode && result.targetStarted) {
 				const toAdd = result.targetStarted.filter((target) => {
 					if (this.autoAttachTypes.length > 0) {
 						const tt = target.targetType ?? '';
@@ -933,14 +1172,14 @@ export class OnecDebugSession extends DebugSession {
 						const typeDisplay = getTargetTypeDisplayName(target.targetType ?? '') || 'Unknown';
 						const threadName = `${typeDisplay} (${target.userName ?? 'unknown'})`;
 						this.sendEvent(new ThreadEvent('started', threadId));
-					this.sendEvent(new OutputEvent(
-						`[DEBUG] Цель отладки подключена: ${threadName}\n`,
-						'console',
-					));
+						this.sendEvent(new OutputEvent(
+							`[DEBUG] Цель отладки подключена: ${threadName}\n`,
+							'console',
+						));
+					}
+					this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
 				}
-				this.sendEvent(new InvalidatedEvent(['threads', 'stack']));
 			}
-		}
 
 			// targetQuit — при шаге (callStackFormed) не удалять цель, в которой остановились
 			if (result.targetQuit) {
@@ -1036,6 +1275,7 @@ export class OnecDebugSession extends DebugSession {
 		args: OnecLaunchRequestArguments,
 		_launch: boolean,
 	): Promise<void> {
+		this.isLaunchMode = _launch;
 		const workspaceRoot =
 			(args.rootProject ?? '').trim() || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
 
@@ -1045,7 +1285,8 @@ export class OnecDebugSession extends DebugSession {
 		let host = args.debugServerHost ?? 'localhost';
 		let port = args.debugServerPort ?? 1560;
 
-		const ensured = await ensureDbgsWhenDebugging(workspaceRoot || undefined, args.debugServerHost);
+		// Только launch: автозапуск dbgs из env.json. attach — к уже запущенному серверу (конфигуратор и т.д.), иначе занялся бы следующий порт из диапазона.
+		const ensured = _launch ? await ensureDbgsWhenDebugging(workspaceRoot || undefined, args.debugServerHost) : undefined;
 		if (ensured) {
 			host = ensured.rdbgHost;
 			port = ensured.rdbgPort;
@@ -1058,11 +1299,20 @@ export class OnecDebugSession extends DebugSession {
 		}
 
 		this.sendEvent(new OutputEvent(`PID процесса Cursor (extension host): ${process.pid}\n`, 'console'));
-		const dbgsInfo = getLastDbgsLaunch();
-		if (dbgsInfo) {
-			this.sendEvent(new OutputEvent(`Команда dbgs: ${dbgsInfo.commandLine}\n`, 'console'));
-		} else {
+		if (ensured) {
+			const dbgsInfo = getLastDbgsLaunch();
+			if (dbgsInfo) {
+				this.sendEvent(new OutputEvent(`Команда dbgs: ${dbgsInfo.commandLine}\n`, 'console'));
+			}
+		} else if (_launch) {
 			this.sendEvent(new OutputEvent('dbgs: расширение не запускало процесс (удалённый сервер или нет env.json).\n', 'console'));
+		} else {
+			this.sendEvent(
+				new OutputEvent(
+					`attach: RDBG ${host}:${port} — расширение не запускает dbgs (используйте уже запущенный сервер отладки).\n`,
+					'console',
+				),
+			);
 		}
 
 		try {
@@ -1108,10 +1358,10 @@ export class OnecDebugSession extends DebugSession {
 					// игнорируем ошибки initSettings
 				}
 				
-				// Настройка автоподключения (setAutoAttachSettings) если указаны autoAttachTypes
+				// Автоподключение на стороне платформы — только для launch; при attach цели выбираются вручную в панели.
 				const autoAttachTypes = args.autoAttachTypes;
 				this.autoAttachTypes = Array.isArray(autoAttachTypes) ? autoAttachTypes : [];
-				if (autoAttachTypes && this.autoAttachTypes.length > 0) {
+				if (_launch && autoAttachTypes && this.autoAttachTypes.length > 0) {
 					try {
 						const unknownTypes = findUnknownAutoAttachTypes(autoAttachTypes);
 						if (unknownTypes.length > 0) {
@@ -1138,6 +1388,14 @@ export class OnecDebugSession extends DebugSession {
 						));
 					}
 				}
+				if (!_launch && this.autoAttachTypes.length > 0) {
+					this.sendEvent(
+						new OutputEvent(
+							`[DEBUG] Режим attach: autoAttachTypes (${this.autoAttachTypes.join(', ')}) используются только как фильтр списка доступных целей.\n`,
+							'console',
+						),
+					);
+				}
 				
 				try {
 					// Задержка перед первым опросом: даём серверу 1С время обработать attachDebugUI
@@ -1151,65 +1409,36 @@ export class OnecDebugSession extends DebugSession {
 					} catch {
 						// игнорируем ошибку ping
 					}
-					// Пауза после ping, затем 1–2 вызова getDbgTargets (сервер может отдавать цели с задержкой)
-					const baseReq = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
-					const applyTargets = (res: { id?: unknown; item?: unknown }): void => {
-						const idList = res.id ?? res.item;
-						const list = Array.isArray(idList) ? idList : idList ? [idList] : [];
-						let filtered = list as DebugTargetId[];
-						if (autoAttachTypes && autoAttachTypes.length > 0) {
-							filtered = list.filter((t: DebugTargetId) => {
-								const tt = t.targetType ?? '';
-								if (!tt.trim()) return true;
-								return matchesAutoAttachType(tt, autoAttachTypes);
-							}) as DebugTargetId[];
-						}
-						if (filtered.length > 0) this.targets = this.deduplicateTargetsById(filtered);
-					};
-					await new Promise((r) => setTimeout(r, 300));
-					try {
-						const res1 = await this.rdbgClient.getDbgTargets(baseReq);
-						applyTargets(res1);
-						if (this.targets.length === 0) {
-							await new Promise((r) => setTimeout(r, 300));
-							const res2 = await this.rdbgClient.getDbgTargets(baseReq);
-							applyTargets(res2);
-						}
-					} catch {
-						// игнорируем, дальше сработает цикл опроса или ping
-					}
-
-					// В режиме attach: ждём появления целей до 15 с (клиент 1С может подключаться с задержкой)
-					const waitTargetsMs = _launch ? 0 : 15000;
-					const pollIntervalMs = 150;
-					for (let elapsed = 0; elapsed < waitTargetsMs && this.targets.length === 0; elapsed += pollIntervalMs) {
-						await new Promise((r) => setTimeout(r, pollIntervalMs));
+					// Пауза после ping; getDbgTargets до запуска клиента — только для launch (attach: цели через панель).
+					if (_launch) {
+						const baseReq = { infoBaseAlias: this.rdbgInfoBaseAlias, idOfDebuggerUi: this.debuggerId };
+						const applyTargets = (res: { id?: unknown; item?: unknown }): void => {
+							const idList = res.id ?? res.item;
+							const list = Array.isArray(idList) ? idList : idList ? [idList] : [];
+							let filtered = list as DebugTargetId[];
+							if (autoAttachTypes && autoAttachTypes.length > 0) {
+								filtered = list.filter((t: DebugTargetId) => {
+									const tt = t.targetType ?? '';
+									if (!tt.trim()) return true;
+									return matchesAutoAttachType(tt, autoAttachTypes);
+								}) as DebugTargetId[];
+							}
+							if (filtered.length > 0) this.targets = this.deduplicateTargetsById(filtered);
+						};
+						await new Promise((r) => setTimeout(r, 300));
 						try {
-							const res = await this.rdbgClient!.getDbgTargets({
-								infoBaseAlias: this.rdbgInfoBaseAlias,
-								idOfDebuggerUi: this.debuggerId,
-							});
-							const list = Array.isArray(res.id) ? res.id : res.id ? [res.id] : [];
-							const filtered =
-								autoAttachTypes?.length
-									? list.filter((t) => {
-											const tt = t.targetType ?? '';
-											if (!tt.trim()) return true;
-											return matchesAutoAttachType(tt, autoAttachTypes);
-										})
-									: list;
-							if (filtered.length > 0) {
-								this.targets = this.deduplicateTargetsById(filtered);
-								await this.attachToTargets(this.targets);
-								this.sendEvent(new OutputEvent(
-									`[DEBUG] Ожидание целей: найдено ${this.targets.length}\n`,
-									'console',
-								));
-								break;
+							const res1 = await this.rdbgClient.getDbgTargets(baseReq);
+							applyTargets(res1);
+							if (this.targets.length === 0) {
+								await new Promise((r) => setTimeout(r, 300));
+								const res2 = await this.rdbgClient.getDbgTargets(baseReq);
+								applyTargets(res2);
 							}
 						} catch {
-							// продолжаем опрос
+							// игнорируем, дальше сработает цикл опроса или ping
 						}
+					} else {
+						await new Promise((r) => setTimeout(r, 300));
 					}
 				} catch {
 					this.targets = [];
@@ -1273,7 +1502,7 @@ export class OnecDebugSession extends DebugSession {
 				this.sendEvent(new InitializedEvent());
 				this.startPingPolling();
 			} else {
-				const message = getAttachResultMessage(result);
+				const message = getAttachResultMessage(result, { attachMode: !_launch });
 				this.sendErrorResponse(response, { id: 1, format: message });
 			}
 		} catch (err) {

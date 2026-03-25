@@ -15,6 +15,7 @@ import { WorkspaceTasksCommands } from './commands/workspaceTasksCommands';
 import { registerDebugAdapter } from './debug/debugAdapter';
 import { showVariableInWindow } from './debug/showVariableInWindow';
 import { openCalculateExpressionPanel } from './debug/calculateExpression';
+import { showDebugTargetsPicker } from './debug/debugTargetsPickerPanel';
 
 /**
  * Проверяет, является ли открытая рабочая область проектом 1С
@@ -55,6 +56,24 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	registerDebugAdapter(context);
+
+	const debugTargetsPickerOnStart = vscode.debug.onDidStartDebugSession((session) => {
+		if (session.type === 'onec' && session.configuration?.request === 'attach') {
+			// attachDebugUI в адаптере асинхронный — даём время до attached, иначе первая загрузка списка пустая (есть «Обновить»).
+			setTimeout(() => showDebugTargetsPicker(context, session), 900);
+		}
+	});
+	const showDebugTargetsPickerCommand = vscode.commands.registerCommand(
+		'1c-dev-tools.debug.showDebugTargetsPicker',
+		() => {
+			const s = vscode.debug.activeDebugSession;
+			if (s?.type === 'onec' && s.configuration?.request === 'attach') {
+				showDebugTargetsPicker(context, s);
+			} else {
+				void vscode.window.showWarningMessage('Активна не сессия отладки 1С с request: attach.');
+			}
+		},
+	);
 
 	const vrunnerManager = VRunnerManager.getInstance(context);
 
@@ -412,7 +431,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		configEnvEditCommand,
 		showVariableInWindowCommand,
 		calculateExpressionCommand,
-		calculateExpressionFromEditorCommand
+		calculateExpressionFromEditorCommand,
+		debugTargetsPickerOnStart,
+		showDebugTargetsPickerCommand,
 	);
 
 }

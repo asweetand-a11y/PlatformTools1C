@@ -1091,6 +1091,55 @@ export class RdbgClient {
 	}
 
 	/**
+	 * Приостановка выполнения цели на следующей инструкции BSL (rtgt?cmd=SUSPEND).
+	 * Тело как у pingDBGTGT (infoBaseAlias, seanceID, targetID).
+	 */
+	async suspendRuntimeDebugTarget(
+		base: RDbgBaseRequest,
+		targetId: string,
+		seanceId: string,
+		rteProcVersion?: string,
+	): Promise<void> {
+		const body = buildRtgtPingRequestBody(base, targetId, seanceId, rteProcVersion);
+		await this.postXml('SUSPEND', body, { endpoint: 'rtgt' });
+	}
+
+	/**
+	 * Завершение цели отладки в рантайме 1С (rtgt?cmd=TERMINATE_RUNTIME_DEBUG_TARGET).
+	 */
+	async terminateRuntimeDebugTarget(
+		base: RDbgBaseRequest,
+		targetId: string,
+		seanceId: string,
+		rteProcVersion?: string,
+	): Promise<void> {
+		const body = buildRtgtPingRequestBody(base, targetId, seanceId, rteProcVersion);
+		await this.postXml('TERMINATE_RUNTIME_DEBUG_TARGET', body, { endpoint: 'rtgt' });
+	}
+
+	/**
+	 * Проверка, можно ли завершить цель из отладчика (rtgt?cmd=CHECK_TARGET_CAN_TERMINATE).
+	 * При неуспешном ответе или неразобранном XML возвращает false.
+	 */
+	async checkTargetCanTerminate(
+		base: RDbgBaseRequest,
+		targetId: string,
+		seanceId: string,
+		rteProcVersion?: string,
+	): Promise<boolean> {
+		const body = buildRtgtPingRequestBody(base, targetId, seanceId, rteProcVersion);
+		try {
+			const xml = await this.postXml('CHECK_TARGET_CAN_TERMINATE', body, { endpoint: 'rtgt' });
+			const lower = xml.toLowerCase();
+			if (lower.includes('>true<') || lower.includes('>1<')) return true;
+			if (lower.includes('>false<') || lower.includes('>0<')) return false;
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
 	 * Регистрация отладчика для цели (RemoteDebuggerRunTime?cmd=register). Вызывать после attach к цели.
 	 */
 	async registerRemoteDebuggerRunTime(base: RDbgBaseRequest, targetIDStr: string, setDefDbgToThisSeance: boolean): Promise<void> {
