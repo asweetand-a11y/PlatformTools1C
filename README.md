@@ -84,23 +84,7 @@
 
 ```json
 {
-  "default": {
-    "--ibconnection": "/F./build/ib"
-  }
-}
-```
-### Параметры отладки модулей BSL (утилита dbgs.exe)
-
-При активации расширения `1C Dev Tools`:
- - Работает только по протоколу http!
- - Если сервер отладки локально: выполняется попытка запуска сервера отладки dbgs.exe.
- - Если сервер отладки удаленно: выполняется попытка подключения.
- - В конфигураторе измените режим запуска отладки на http протокол.
-
-Параметры в `env.json`:
-
-```json
-{
+    "$schema": "https://raw.githubusercontent.com/vanessa-opensource/vanessa-runner/develop/vanessa-runner-schema.json",
     "default": {
         "--ibconnection": "/F./build/ib",
         "--infoBase": "Имя информационной базы",
@@ -109,8 +93,8 @@
         "--root": ".",
         "--workspace": ".",
         "--v8version": "8.3.27",
-        "--v8-platform-root": "${env:PROGRAMFILES}/1cv8",
-        "--debug-server": "Имя компьютера сервера отладки",
+        "--v8-platform-root": "C:/Program Files/1cv8",
+        "--debug-server": "<имя сервера отладки или если локально то имя компьютера>",
         "--debug-port-range": "1560:1591",
         "--locale": "ru",
         "--language": "ru",
@@ -119,6 +103,16 @@
     }
 }
 ```
+
+В папку с проектом скопировать oscript_modules для подмены модулей onescript. Оригиналы можно взять https://github.com/asweetand-a11y/DevTool1C
+
+### Параметры отладки модулей BSL (утилита dbgs.exe)
+
+При активации расширения `1C Dev Tools`:
+ - Работает только по протоколу http!
+ - Если сервер отладки локально: выполняется попытка запуска сервера отладки dbgs.exe.
+ - Если сервер отладки удаленно: выполняется попытка подключения.
+ - В конфигураторе измените режим запуска отладки на http протокол.
 
 Параметры в `launch.json`:
 
